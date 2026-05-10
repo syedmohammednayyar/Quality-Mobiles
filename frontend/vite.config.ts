@@ -6,8 +6,6 @@ export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
 
     return {
-      // Serve files from the frontend directory so Vite finds frontend/index.html
-      root: path.resolve(__dirname, 'frontend'),
       server: {
         port: 3000,
         host: '0.0.0.0',
@@ -21,7 +19,7 @@ export default defineConfig(({ mode }) => {
       plugins: [react()],
       resolve: {
         alias: {
-          '@': path.resolve(__dirname, 'frontend'),
+          '@': path.resolve(__dirname),
         }
       }
     };
