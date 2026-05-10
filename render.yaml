@@ -21,3 +21,9 @@ services:
         value: quality-mobiles
       - key: JWT_AUDIENCE
         value: quality-mobiles-users
+
+  - type: static_site
+    name: quality-mobiles-frontend
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    publishDir: dist
