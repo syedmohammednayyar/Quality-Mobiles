@@ -1,0 +1,308 @@
+.buyback-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.buyback-page {
+  animation: slideInUp 0.3s ease-out;
+}
+
+.buyback-hero {
+  padding: 24px;
+  border-color: color-mix(in srgb, var(--border-color) 78%, var(--color-primary-100));
+  background: linear-gradient(165deg, var(--bg-primary), color-mix(in srgb, var(--bg-primary) 90%, var(--color-primary-50)));
+}
+
+.buyback-container h1 {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.buyback-hero p {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.buyback-state {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.buyback-state-error {
+  border-color: color-mix(in srgb, var(--color-error-500) 28%, var(--border-color));
+  background: color-mix(in srgb, var(--color-error-50) 55%, var(--bg-primary));
+  color: var(--color-error-600);
+}
+
+.buyback-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 24px;
+}
+
+.entry-card {
+  background: linear-gradient(170deg, var(--bg-primary), color-mix(in srgb, var(--bg-primary) 92%, var(--color-slate-50)));
+  border: 1px solid color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
+}
+
+.buyback-form {
+  border-color: color-mix(in srgb, var(--border-color) 78%, var(--color-primary-100));
+}
+
+.entry-card h2 {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin: 0 0 20px 0;
+}
+
+.list-card {
+  background: linear-gradient(170deg, var(--bg-primary), color-mix(in srgb, var(--bg-primary) 94%, var(--color-slate-50)));
+  border: 1px solid color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
+}
+
+.buyback-list-card {
+  overflow: hidden;
+}
+
+.list-card h2 {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin: 0 0 20px 0;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.form-input {
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  transition: border-color var(--transition);
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--color-primary-400);
+  background: var(--bg-primary);
+  box-shadow: 0 0 0 4px rgba(28, 94, 214, 0.12);
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.buyback-submit {
+  margin-top: 4px;
+}
+
+.condition-badge {
+  display: inline-block;
+  padding: 6px 12px;
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.condition-excellent {
+  background: color-mix(in srgb, var(--color-success-100) 72%, var(--bg-primary));
+  color: var(--color-success-700);
+}
+
+.condition-good {
+  background: color-mix(in srgb, var(--color-primary-100) 72%, var(--bg-primary));
+  color: var(--color-primary-700);
+}
+
+.condition-fair {
+  background: color-mix(in srgb, var(--color-warning-100) 72%, var(--bg-primary));
+  color: var(--color-warning-600);
+}
+
+.condition-poor {
+  background: color-mix(in srgb, var(--color-error-100) 72%, var(--bg-primary));
+  color: var(--color-error-600);
+}
+
+.buyback-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.buyback-table thead {
+  background: color-mix(in srgb, var(--bg-secondary) 88%, var(--color-primary-50));
+  border-bottom: 2px solid var(--border-color);
+}
+
+.buyback-table th {
+  padding: 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+
+.buyback-table tbody tr {
+  border-bottom: 1px solid var(--border-color);
+  transition: background-color var(--transition);
+}
+
+.buyback-table tbody tr:hover {
+  background: color-mix(in srgb, var(--color-primary-50) 40%, var(--bg-primary));
+}
+
+.buyback-table td {
+  padding: 14px 12px;
+  color: var(--text-primary);
+}
+
+.device-name {
+  font-weight: 600;
+  color: var(--color-primary-700);
+}
+
+.imei {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.price {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.price.highlight {
+  color: var(--success);
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-pending {
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--warning);
+}
+
+.status-accepted {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--success);
+}
+
+.status-processed {
+  background: rgba(40, 120, 181, 0.1);
+  color: var(--primary);
+}
+
+.status-rejected {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--error);
+}
+
+.buyback-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.buyback-empty {
+  text-align: center;
+  padding: 20px 16px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+@media (max-width: 1024px) {
+  .buyback-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .buyback-container {
+    gap: 16px;
+  }
+
+  .buyback-hero {
+    padding: 18px;
+  }
+
+  .buyback-hero h1 {
+    font-size: 22px;
+  }
+
+  .entry-card,
+  .list-card {
+    padding: 16px;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .buyback-table {
+    font-size: 12px;
+  }
+
+  .buyback-table th,
+  .buyback-table td {
+    padding: 10px 8px;
+  }
+}
+
+.dark .buyback-container h1 {
+  color: var(--text-primary);
+}
+
+.dark .entry-card,
+.dark .list-card {
+  background: var(--bg-primary);
+  border-color: var(--border-color);
+}
