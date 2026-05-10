@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: quality-mobiles-backend
+    env: node
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 22
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_ACCESS_EXPIRES_IN
+        value: 15m
+      - key: JWT_ISSUER
+        value: quality-mobiles
+      - key: JWT_AUDIENCE
+        value: quality-mobiles-users
