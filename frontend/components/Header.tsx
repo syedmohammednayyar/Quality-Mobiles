@@ -128,7 +128,7 @@ const Header: React.FC<HeaderProps> = ({
           </div>
 
           <button className="header-icon-btn" onClick={toggleDarkMode} title={isDarkMode ? 'Light Mode' : 'Dark Mode'}>
-            {isDarkMode ? 'L' : 'D'}
+            {isDarkMode ? 'Light Mode' : 'Dark Mode'}
           </button>
 
           <div className="user-menu-wrapper" ref={userMenuRef}>
