@@ -1,101 +1,80 @@
-.buyback-container {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-}
-
-.buyback-page {
-  animation: slideInUp 0.3s ease-out;
+.buyback-page-shell {
+  display: grid;
+  gap: 20px;
+  padding-bottom: 24px;
 }
 
 .buyback-hero {
-  padding: 24px;
-  border-color: color-mix(in srgb, var(--border-color) 78%, var(--color-primary-100));
-  background: linear-gradient(165deg, var(--bg-primary), color-mix(in srgb, var(--bg-primary) 90%, var(--color-primary-50)));
-}
-
-.buyback-container h1 {
-  font-size: 28px;
-  font-weight: 800;
-  color: var(--text-primary);
-  margin: 0;
-  letter-spacing: -0.02em;
-}
-
-.buyback-hero p {
-  margin: 6px 0 0;
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
-.buyback-state {
-  margin: 0;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-primary);
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-
-.buyback-state-error {
-  border-color: color-mix(in srgb, var(--color-error-500) 28%, var(--border-color));
-  background: color-mix(in srgb, var(--color-error-50) 55%, var(--bg-primary));
-  color: var(--color-error-600);
-}
-
-.buyback-grid {
   display: grid;
-  grid-template-columns: 1fr 1.2fr;
-  gap: 24px;
-}
-
-.entry-card {
-  background: linear-gradient(170deg, var(--bg-primary), color-mix(in srgb, var(--bg-primary) 92%, var(--color-slate-50)));
-  border: 1px solid color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
-  border-radius: var(--radius-lg);
-  padding: 24px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  gap: 20px;
+  align-items: stretch;
+  padding: 28px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 70%, var(--color-primary-200));
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--color-primary-100) 40%, transparent) 0%, transparent 34%),
+    linear-gradient(160deg, var(--bg-primary) 0%, color-mix(in srgb, var(--bg-primary) 94%, var(--color-primary-50)) 100%);
   box-shadow: var(--shadow-sm);
 }
 
-.buyback-form {
-  border-color: color-mix(in srgb, var(--border-color) 78%, var(--color-primary-100));
-}
-
-.entry-card h2 {
-  font-size: 18px;
-  font-weight: 800;
+.buyback-hero-copy h1 {
+  margin: 6px 0 0;
+  font-size: clamp(28px, 3vw, 42px);
+  line-height: 1.05;
+  letter-spacing: -0.04em;
   color: var(--text-primary);
-  margin: 0 0 20px 0;
 }
 
-.list-card {
-  background: linear-gradient(170deg, var(--bg-primary), color-mix(in srgb, var(--bg-primary) 94%, var(--color-slate-50)));
-  border: 1px solid color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
-  border-radius: var(--radius-lg);
-  padding: 24px;
-  box-shadow: var(--shadow-sm);
+.buyback-hero-copy p {
+  margin: 12px 0 0;
+  max-width: 780px;
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1.7;
 }
 
-.buyback-list-card {
-  overflow: hidden;
-}
-
-.list-card h2 {
-  font-size: 18px;
+.eyebrow,
+.panel-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 11px;
   font-weight: 800;
-  color: var(--text-primary);
-  margin: 0 0 20px 0;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
-.form-group {
+.eyebrow {
+  background: color-mix(in srgb, var(--color-primary-100) 64%, var(--bg-primary));
+  color: var(--color-primary-700);
+}
+
+.panel-kicker {
+  background: color-mix(in srgb, var(--color-primary-50) 58%, var(--bg-primary));
+  color: var(--color-primary-700);
+}
+
+.buyback-hero-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.hero-metric {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
+  justify-content: space-between;
+  min-height: 96px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 66%, var(--color-primary-100));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(255, 255, 255, 0.46));
+  box-shadow: var(--shadow-sm);
 }
 
-.form-group label {
+.hero-metric span {
   font-size: 12px;
   font-weight: 700;
   color: var(--text-secondary);
@@ -103,15 +82,134 @@
   letter-spacing: 0.08em;
 }
 
+.hero-metric strong {
+  margin-top: 10px;
+  font-size: 28px;
+  line-height: 1;
+  color: var(--text-primary);
+}
+
+.buyback-banner {
+  padding: 14px 16px;
+  border-radius: 16px;
+  font-weight: 700;
+  box-shadow: var(--shadow-sm);
+}
+
+.buyback-banner-error {
+  border: 1px solid color-mix(in srgb, var(--color-error-500) 34%, var(--border-color));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-error-50) 70%, var(--bg-primary)), var(--bg-primary));
+  color: var(--color-error-700);
+}
+
+.buyback-banner-success {
+  border: 1px solid color-mix(in srgb, var(--color-success-500) 28%, var(--border-color));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-success-50) 70%, var(--bg-primary)), var(--bg-primary));
+  color: var(--color-success-700);
+}
+
+.buyback-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.55fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.buyback-main-column {
+  display: grid;
+  gap: 20px;
+}
+
+.buyback-sidebar {
+  position: relative;
+  overflow: visible;
+}
+
+.sidebar-sticky {
+  position: sticky;
+  top: 20px;
+  display: grid;
+  gap: 18px;
+}
+
+.buyback-panel,
+.buyback-sidebar {
+  padding: 22px;
+  border-radius: 22px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 80%, var(--color-primary-100));
+  background:
+    linear-gradient(180deg, var(--bg-primary) 0%, color-mix(in srgb, var(--bg-primary) 94%, var(--color-slate-50)) 100%);
+  box-shadow: var(--shadow-sm);
+}
+
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.panel-header.compact {
+  margin-bottom: 0;
+}
+
+.panel-header h2 {
+  margin: 8px 0 0;
+  font-size: 20px;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+
+.panel-caption {
+  max-width: 320px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.panel-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.panel-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.panel-grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.field-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field-block-full {
+  grid-column: 1 / -1;
+}
+
+.field-block label {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
 .form-input {
-  padding: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 11px 14px;
+  border-radius: 14px;
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  font-size: 14px;
   background: var(--bg-secondary);
   color: var(--text-primary);
-  font-family: var(--font-family);
-  transition: border-color var(--transition);
+  font: inherit;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease, background 160ms ease;
 }
 
 .form-input:focus {
@@ -121,188 +219,682 @@
   box-shadow: 0 0 0 4px rgba(28, 94, 214, 0.12);
 }
 
-.form-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
+.form-textarea {
+  min-height: 96px;
+  resize: vertical;
 }
 
-.buyback-submit {
-  margin-top: 4px;
+.form-textarea-tall {
+  min-height: 132px;
 }
 
-.condition-badge {
-  display: inline-block;
-  padding: 6px 12px;
+.monospace {
+  font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+}
+
+.panel-actions-row,
+.table-actions-row,
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.panel-actions-sticky {
+  position: sticky;
+  bottom: 16px;
+  padding: 14px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--bg-primary) 92%, var(--color-primary-50));
+  border: 1px solid color-mix(in srgb, var(--border-color) 84%, var(--color-primary-100));
+}
+
+.inline-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.inline-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-secondary) 84%, var(--color-primary-50));
+  border: 1px solid color-mix(in srgb, var(--border-color) 72%, var(--color-primary-100));
+}
+
+.status-chip-row,
+.toggle-grid,
+.workflow-actions-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.status-chip,
+.check-chip,
+.read-only-chip,
+.repair-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.status-chip-teal {
+  background: color-mix(in srgb, var(--color-primary-50) 68%, var(--bg-primary));
+  border-color: color-mix(in srgb, var(--color-primary-100) 75%, var(--border-color));
+  color: var(--color-primary-700);
+}
+
+.status-chip-neutral,
+.read-only-chip,
+.repair-chip {
+  background: color-mix(in srgb, var(--bg-secondary) 80%, var(--color-slate-50));
+  border-color: color-mix(in srgb, var(--border-color) 84%, var(--color-slate-200));
+  color: var(--text-secondary);
+}
+
+.check-chip {
+  background: color-mix(in srgb, var(--bg-primary) 82%, var(--color-primary-50));
+  border-color: color-mix(in srgb, var(--border-color) 78%, var(--color-primary-100));
   color: var(--text-primary);
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  font-weight: 600;
+}
+
+.check-chip input {
+  margin: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.check-chip-wide {
+  min-width: 220px;
+}
+
+.history-strip {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.history-strip h3,
+.assessment-card h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.history-list {
+  display: grid;
+  gap: 10px;
+}
+
+.history-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
+  background: color-mix(in srgb, var(--bg-secondary) 84%, var(--color-primary-50));
+}
+
+.history-card strong {
+  display: block;
+  color: var(--text-primary);
+}
+
+.history-card p,
+.selected-summary p,
+.detail-item span,
+.timeline-step p,
+.condition-summary,
+.empty-slate {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.empty-slate {
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px dashed color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
+  background: color-mix(in srgb, var(--bg-secondary) 82%, var(--color-primary-50));
+}
+
+.assessment-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.assessment-card {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
+  background: color-mix(in srgb, var(--bg-secondary) 85%, var(--color-primary-50));
+}
+
+.condition-summary-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.condition-badge,
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .condition-excellent {
-  background: color-mix(in srgb, var(--color-success-100) 72%, var(--bg-primary));
+  background: color-mix(in srgb, var(--color-success-100) 70%, var(--bg-primary));
   color: var(--color-success-700);
 }
 
 .condition-good {
-  background: color-mix(in srgb, var(--color-primary-100) 72%, var(--bg-primary));
+  background: color-mix(in srgb, var(--color-primary-100) 70%, var(--bg-primary));
   color: var(--color-primary-700);
 }
 
 .condition-fair {
-  background: color-mix(in srgb, var(--color-warning-100) 72%, var(--bg-primary));
-  color: var(--color-warning-600);
+  background: color-mix(in srgb, var(--color-warning-100) 70%, var(--bg-primary));
+  color: var(--color-warning-700);
 }
 
 .condition-poor {
+  background: color-mix(in srgb, var(--color-error-100) 70%, var(--bg-primary));
+  color: var(--color-error-700);
+}
+
+.workflow-pending_inspection,
+.workflow-inspection_completed,
+.workflow-approved,
+.workflow-repair_pending,
+.workflow-repair_in_progress,
+.workflow-repair_completed,
+.workflow-ready_for_resale,
+.workflow-reserved,
+.workflow-sold,
+.workflow-rejected {
+  border: 1px solid transparent;
+}
+
+.workflow-pending_inspection {
+  background: color-mix(in srgb, var(--color-warning-100) 72%, var(--bg-primary));
+  color: var(--color-warning-700);
+}
+
+.workflow-inspection_completed,
+.workflow-repair_pending,
+.workflow-repair_in_progress {
+  background: color-mix(in srgb, var(--color-primary-100) 72%, var(--bg-primary));
+  color: var(--color-primary-700);
+}
+
+.workflow-approved,
+.workflow-ready_for_resale,
+.workflow-reserved {
+  background: color-mix(in srgb, var(--color-success-100) 72%, var(--bg-primary));
+  color: var(--color-success-700);
+}
+
+.workflow-rejected {
   background: color-mix(in srgb, var(--color-error-100) 72%, var(--bg-primary));
-  color: var(--color-error-600);
+  color: var(--color-error-700);
+}
+
+.workflow-sold {
+  background: color-mix(in srgb, var(--color-slate-200) 72%, var(--bg-primary));
+  color: var(--text-primary);
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pricing-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 78%, var(--color-primary-100));
+  background: linear-gradient(180deg, var(--bg-primary), color-mix(in srgb, var(--bg-primary) 90%, var(--color-primary-50)));
+}
+
+.pricing-card label {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.pricing-card-highlight {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-primary-50) 72%, var(--bg-primary)), var(--bg-primary));
+}
+
+.pricing-value {
+  font-size: 26px;
+  font-weight: 900;
+  color: var(--color-primary-700);
+}
+
+.timeline-shell {
+  display: grid;
+  gap: 10px;
+  padding: 2px 0 10px;
+}
+
+.timeline-step {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 10px 0;
+  position: relative;
+}
+
+.timeline-step::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 24px;
+  bottom: -8px;
+  width: 2px;
+  background: color-mix(in srgb, var(--border-color) 85%, var(--color-primary-100));
+}
+
+.timeline-step:last-child::before {
+  display: none;
+}
+
+.timeline-step.completed .timeline-dot,
+.timeline-step.active .timeline-dot {
+  box-shadow: 0 0 0 4px rgba(28, 94, 214, 0.1);
+}
+
+.timeline-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  margin-top: 3px;
+  border: 3px solid var(--bg-primary);
+  background: color-mix(in srgb, var(--color-slate-300) 70%, var(--border-color));
+  position: relative;
+  z-index: 1;
+}
+
+.timeline-step.completed .timeline-dot {
+  background: var(--color-success-500);
+}
+
+.timeline-step.active .timeline-dot {
+  background: var(--color-primary-500);
+}
+
+.timeline-step strong {
+  color: var(--text-primary);
+}
+
+.timeline-step p {
+  margin-top: 2px;
+}
+
+.selected-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
+  background: color-mix(in srgb, var(--bg-secondary) 84%, var(--color-primary-50));
+}
+
+.selected-summary strong {
+  display: block;
+  color: var(--text-primary);
+}
+
+.detail-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.detail-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
+  background: color-mix(in srgb, var(--bg-secondary) 82%, var(--bg-primary));
+}
+
+.detail-item span {
+  margin: 0;
+}
+
+.detail-item strong {
+  text-align: right;
+  color: var(--text-primary);
+}
+
+.sidebar-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.transfer-box {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
+  background: color-mix(in srgb, var(--bg-secondary) 84%, var(--color-primary-50));
+}
+
+.transfer-box label {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.toolbar-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.table-shell {
+  overflow: auto;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
 }
 
 .buyback-table {
   width: 100%;
+  min-width: 1400px;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .buyback-table thead {
-  background: color-mix(in srgb, var(--bg-secondary) 88%, var(--color-primary-50));
-  border-bottom: 2px solid var(--border-color);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-primary-50) 72%, var(--bg-primary)), var(--bg-primary));
+}
+
+.buyback-table th,
+.buyback-table td {
+  padding: 13px 12px;
+  text-align: left;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 88%, var(--color-primary-100));
+  vertical-align: top;
 }
 
 .buyback-table th {
-  padding: 12px;
-  text-align: left;
-  font-weight: 600;
-  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 800;
   text-transform: uppercase;
-  font-size: 12px;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
 }
 
 .buyback-table tbody tr {
-  border-bottom: 1px solid var(--border-color);
-  transition: background-color var(--transition);
+  transition: background 160ms ease, transform 160ms ease;
 }
 
 .buyback-table tbody tr:hover {
-  background: color-mix(in srgb, var(--color-primary-50) 40%, var(--bg-primary));
+  background: color-mix(in srgb, var(--color-primary-50) 42%, var(--bg-primary));
 }
 
-.buyback-table td {
-  padding: 14px 12px;
+.selected-row {
+  background: color-mix(in srgb, var(--color-primary-50) 56%, var(--bg-primary));
+}
+
+.expanded-row td {
+  padding: 0;
+  background: color-mix(in srgb, var(--bg-secondary) 80%, var(--color-primary-50));
+}
+
+.expanded-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  padding: 16px;
+}
+
+.expanded-grid h4 {
+  margin: 0 0 8px;
   color: var(--text-primary);
 }
 
-.device-name {
-  font-weight: 600;
-  color: var(--color-primary-700);
-}
-
-.imei {
-  font-family: 'Courier New', monospace;
+.expanded-grid p {
+  margin: 0 0 6px;
   font-size: 13px;
   color: var(--text-secondary);
 }
 
-.price {
-  font-weight: 600;
+.price-cell,
+.profit-cell {
+  font-weight: 800;
   color: var(--text-primary);
 }
 
-.price.highlight {
-  color: var(--success);
-}
-
-.status-badge {
-  display: inline-block;
-  padding: 6px 12px;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.status-pending {
-  background: rgba(245, 158, 11, 0.1);
-  color: var(--warning);
-}
-
-.status-accepted {
-  background: rgba(16, 185, 129, 0.1);
-  color: var(--success);
-}
-
-.status-processed {
-  background: rgba(40, 120, 181, 0.1);
-  color: var(--primary);
-}
-
-.status-rejected {
-  background: rgba(239, 68, 68, 0.1);
-  color: var(--error);
-}
-
-.buyback-actions {
+.row-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-.buyback-empty {
-  text-align: center;
-  padding: 20px 16px;
-  color: var(--text-secondary);
-  font-style: italic;
+.quick-actions {
+  position: relative;
 }
 
-@media (max-width: 1024px) {
-  .buyback-grid {
+.quick-actions summary {
+  list-style: none;
+}
+
+.quick-actions summary::-webkit-details-marker {
+  display: none;
+}
+
+.quick-actions-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 20;
+  display: grid;
+  gap: 6px;
+  min-width: 180px;
+  padding: 10px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 80%, var(--color-primary-100));
+  background: var(--bg-primary);
+  box-shadow: var(--shadow-md);
+}
+
+.quick-actions-menu button {
+  width: 100%;
+  padding: 9px 11px;
+  border: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-secondary) 82%, var(--color-primary-50));
+  color: var(--text-primary);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.quick-actions-menu button:hover {
+  background: color-mix(in srgb, var(--color-primary-100) 68%, var(--bg-primary));
+}
+
+.quick-actions-menu button.danger {
+  color: var(--color-error-700);
+}
+
+.pagination-bar {
+  margin-top: 16px;
+  padding-top: 4px;
+}
+
+.skeleton-row td {
+  padding: 14px 12px;
+}
+
+.skeleton-bar {
+  height: 12px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(226, 232, 240, 0.8) 0%, rgba(191, 219, 254, 0.5) 50%, rgba(226, 232, 240, 0.8) 100%);
+  background-size: 200% 100%;
+  animation: buybackShimmer 1.2s ease-in-out infinite;
+}
+
+.btn-block {
+  width: 100%;
+  justify-content: center;
+}
+
+.btn-warning {
+  border: 1px solid color-mix(in srgb, var(--color-warning-500) 35%, var(--border-color));
+  background: color-mix(in srgb, var(--color-warning-50) 70%, var(--bg-primary));
+  color: var(--color-warning-700);
+}
+
+.btn-danger {
+  border: 1px solid color-mix(in srgb, var(--color-error-500) 35%, var(--border-color));
+  background: color-mix(in srgb, var(--color-error-50) 72%, var(--bg-primary));
+  color: var(--color-error-700);
+}
+
+.btn-sm {
+  min-height: 36px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+@keyframes buybackShimmer {
+  0% {
+    background-position: 0% 0%;
+  }
+  100% {
+    background-position: 200% 0%;
+  }
+}
+
+@media (max-width: 1280px) {
+  .buyback-layout {
     grid-template-columns: 1fr;
   }
-}
 
-@media (max-width: 768px) {
-  .buyback-container {
-    gap: 16px;
+  .sidebar-sticky {
+    position: static;
   }
 
+  .buyback-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .toolbar-grid,
+  .pricing-grid,
+  .assessment-grid,
+  .panel-grid-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .expanded-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .buyback-page-shell {
+    gap: 14px;
+  }
+
+  .buyback-panel,
+  .buyback-sidebar,
   .buyback-hero {
     padding: 18px;
   }
 
-  .buyback-hero h1 {
-    font-size: 22px;
-  }
-
-  .entry-card,
-  .list-card {
-    padding: 16px;
-  }
-
-  .form-row {
+  .buyback-hero-metrics,
+  .panel-grid-2,
+  .panel-grid-3,
+  .toolbar-grid,
+  .pricing-grid,
+  .assessment-grid,
+  .expanded-grid {
     grid-template-columns: 1fr;
   }
 
+  .panel-actions-row,
+  .table-actions-row,
+  .pagination-bar,
+  .panel-header,
+  .selected-summary,
+  .detail-item,
+  .history-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .panel-caption {
+    text-align: left;
+    max-width: none;
+  }
+
   .buyback-table {
-    font-size: 12px;
+    min-width: 1180px;
   }
 
-  .buyback-table th,
-  .buyback-table td {
-    padding: 10px 8px;
+  .status-chip-row,
+  .toggle-grid,
+  .workflow-actions-grid {
+    gap: 8px;
   }
 }
 
-.dark .buyback-container h1 {
-  color: var(--text-primary);
+.dark .buyback-hero,
+.dark .buyback-panel,
+.dark .buyback-sidebar {
+  background: linear-gradient(180deg, var(--bg-primary), var(--bg-secondary));
 }
 
-.dark .entry-card,
-.dark .list-card {
-  background: var(--bg-primary);
-  border-color: var(--border-color);
+.dark .hero-metric {
+  background: linear-gradient(180deg, var(--bg-secondary), var(--bg-primary));
+}
+
+.dark .quick-actions-menu {
+  background: var(--bg-secondary);
 }

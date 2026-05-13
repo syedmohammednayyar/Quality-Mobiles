@@ -166,25 +166,140 @@ export interface ApiSale {
   payment_status?: "pending" | "partial" | "paid";
 }
 
+export type BuybackWorkflowStatus =
+  | "pending_inspection"
+  | "inspection_completed"
+  | "approved"
+  | "rejected"
+  | "repair_pending"
+  | "repair_in_progress"
+  | "repair_completed"
+  | "ready_for_resale"
+  | "reserved"
+  | "sold";
+
+export type BuybackCondition = "Excellent" | "Good" | "Fair" | "Poor";
+export type BuybackPayoutMethod = "cash" | "bank_transfer" | "upi" | "partial";
+
+export interface BuybackInspectionSection {
+  screen_condition?: string;
+  back_panel_condition?: string;
+  frame_body_condition?: string;
+  camera_condition?: string;
+  buttons_condition?: string;
+}
+
+export interface BuybackFunctionalInspection {
+  display_working?: boolean;
+  touch_working?: boolean;
+  face_id_fingerprint_working?: boolean;
+  charging_port_working?: boolean;
+  speaker_mic_working?: boolean;
+  sim_detection_working?: boolean;
+  wifi_bluetooth_working?: boolean;
+  network_signal_working?: boolean;
+}
+
+export interface BuybackDamageDetection {
+  water_damage?: boolean;
+  cracks?: boolean;
+  dead_pixels?: boolean;
+  previously_repaired?: boolean;
+  parts_replaced?: boolean;
+}
+
 export interface ApiBuyback {
   id: string;
   imei: string;
+  serial_number?: string;
   brand: string;
   model: string;
+  variant?: string;
   color: string;
+  storage?: string;
+  ram?: string;
+  battery_health?: number;
+  accessories_received?: string[];
+  box_available?: boolean;
+  charger_available?: boolean;
+  physical_inspection?: BuybackInspectionSection;
+  functional_inspection?: BuybackFunctionalInspection;
+  damage_detection?: BuybackDamageDetection;
   customer?: string | null;
+  customer_name?: string;
+  customer_phone?: string;
   store_ref?: string | null;
-  job_no?: string;
-  ic_number?: string;
-  cash_amount?: string;
-  online_amount?: string;
-  exchange_amount?: string;
-  exchange_model?: string;
-  condition: "Excellent" | "Good" | "Fair" | "Poor";
+  store_name?: string;
+  assigned_store_ref?: string | null;
+  assigned_store_name?: string;
+  assigned_technician?: string | null;
+  assigned_technician_name?: string;
+  rack_location?: string;
+  condition: BuybackCondition;
+  condition_grade?: BuybackCondition;
   market_value: string;
+  condition_deduction?: string;
+  repair_deduction?: string;
+  final_valuation?: string;
   negotiated_price: string;
-  status: "Pending" | "Accepted" | "Processed" | "Rejected";
+  exchange_credit_amount?: string;
+  cash_payout_amount?: string;
+  suggested_resale_price?: string;
+  expected_profit_margin?: number;
+  exchange_credit_enabled?: boolean;
+  payout_method?: BuybackPayoutMethod;
+  linked_sale_id?: string | null;
+  resale_customer?: string | null;
+  resale_sale_id?: string | null;
+  notes?: string;
+  inspection_notes?: string;
+  pricing_notes?: string;
+  repair_notes?: string;
+  resale_notes?: string;
+  status: string;
+  status_key: BuybackWorkflowStatus;
+  inspection_completed_at?: string | null;
+  approved_at?: string | null;
+  rejected_at?: string | null;
+  repair_started_at?: string | null;
+  repair_completed_at?: string | null;
+  reserved_at?: string | null;
+  sold_at?: string | null;
+  transfer_history?: Array<{ from_store?: string | null; to_store?: string | null; note?: string; transferred_by?: string | null; transferred_at?: string }>;
+  inventory_product?: string | null;
+  created_by?: string | null;
+  updated_by?: string | null;
+  approved_by?: string | null;
+  rejected_by?: string | null;
+  deleted_by?: string | null;
+  is_deleted?: boolean;
+  deleted_at?: string | null;
   created_at: string;
+  updated_at?: string;
+  days_in_inventory?: number;
+}
+
+export interface BuybackListResponse {
+  rows: ApiBuyback[];
+  pagination?: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+export interface BuybackListParams {
+  search?: string;
+  status?: BuybackWorkflowStatus;
+  store_id?: string;
+  assigned_technician_id?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  limit?: number;
+  sort_by?: "imei" | "negotiated_price" | "market_value" | "final_valuation" | "status" | "updated_at" | "created_at";
+  sort_dir?: "asc" | "desc";
 }
 
 export interface ApiRepairTicket {
@@ -293,21 +408,43 @@ export interface CreateSalePayload {
 
 export interface CreateBuybackPayload {
   imei: string;
+  serial_number?: string;
+  customer: string;
+  store_ref: string;
+  assigned_store_ref?: string;
+  assigned_technician?: string;
   brand: string;
   model: string;
-  color: string;
-  customer?: string | null;
-  store_ref?: string | null;
-  job_no?: string;
-  ic_number?: string;
-  cash_amount?: string;
-  online_amount?: string;
-  exchange_amount?: string;
-  exchange_model?: string;
-  condition: "Excellent" | "Good" | "Fair" | "Poor";
+  variant?: string;
+  color?: string;
+  storage?: string;
+  ram?: string;
+  battery_health?: number;
+  accessories_received?: string[];
+  box_available?: boolean;
+  charger_available?: boolean;
+  physical_inspection?: BuybackInspectionSection;
+  functional_inspection?: BuybackFunctionalInspection;
+  damage_detection?: BuybackDamageDetection;
+  condition: BuybackCondition;
   market_value: string;
-  negotiated_price: string;
-  status?: "Pending" | "Accepted" | "Processed" | "Rejected";
+  condition_deduction?: string;
+  repair_deduction?: string;
+  final_valuation?: string;
+  negotiated_price?: string;
+  exchange_credit_amount?: string;
+  cash_payout_amount?: string;
+  suggested_resale_price?: string;
+  expected_profit_margin?: string;
+  exchange_credit_enabled?: boolean;
+  payout_method?: BuybackPayoutMethod;
+  linked_sale_id?: string;
+  rack_location?: string;
+  notes?: string;
+  inspection_notes?: string;
+  pricing_notes?: string;
+  repair_notes?: string;
+  resale_notes?: string;
 }
 
 export interface CreateRepairPayload {
@@ -1282,59 +1419,159 @@ export async function deleteSale(id: string): Promise<void> {
   await apiRequest<void>(`/sales/${id}`, { method: "DELETE" });
 }
 
+function normalizeBuybackRow(row: ApiBuyback): ApiBuyback {
+  return {
+    ...row,
+    id: String(row.id),
+    imei: String(row.imei || ""),
+    serial_number: row.serial_number ? String(row.serial_number) : "",
+    brand: row.brand || "",
+    model: row.model || "",
+    variant: row.variant || "",
+    color: row.color || "",
+    storage: row.storage || "",
+    ram: row.ram || "",
+    customer: row.customer === null || row.customer === undefined ? null : String(row.customer),
+    customer_name: row.customer_name || "",
+    customer_phone: row.customer_phone || "",
+    store_ref: row.store_ref === null || row.store_ref === undefined ? null : String(row.store_ref),
+    store_name: row.store_name || "",
+    assigned_store_ref: row.assigned_store_ref === null || row.assigned_store_ref === undefined ? null : String(row.assigned_store_ref),
+    assigned_store_name: row.assigned_store_name || "",
+    assigned_technician: row.assigned_technician === null || row.assigned_technician === undefined ? null : String(row.assigned_technician),
+    assigned_technician_name: row.assigned_technician_name || "",
+    rack_location: row.rack_location || "",
+    condition: row.condition || "Good",
+    condition_grade: row.condition_grade || row.condition || "Good",
+    market_value: toMoney(row.market_value),
+    condition_deduction: toMoney(row.condition_deduction),
+    repair_deduction: toMoney(row.repair_deduction),
+    final_valuation: toMoney(row.final_valuation),
+    negotiated_price: toMoney(row.negotiated_price),
+    exchange_credit_amount: toMoney(row.exchange_credit_amount),
+    cash_payout_amount: toMoney(row.cash_payout_amount),
+    suggested_resale_price: toMoney(row.suggested_resale_price),
+    expected_profit_margin: Number(row.expected_profit_margin || 0),
+    exchange_credit_enabled: Boolean(row.exchange_credit_enabled),
+    payout_method: row.payout_method || "cash",
+    linked_sale_id: row.linked_sale_id === null || row.linked_sale_id === undefined ? null : String(row.linked_sale_id),
+    resale_customer: row.resale_customer === null || row.resale_customer === undefined ? null : String(row.resale_customer),
+    resale_sale_id: row.resale_sale_id === null || row.resale_sale_id === undefined ? null : String(row.resale_sale_id),
+    notes: row.notes || "",
+    inspection_notes: row.inspection_notes || "",
+    pricing_notes: row.pricing_notes || "",
+    repair_notes: row.repair_notes || "",
+    resale_notes: row.resale_notes || "",
+    status: row.status || "Pending Inspection",
+    status_key: row.status_key || "pending_inspection",
+    inspection_completed_at: row.inspection_completed_at || null,
+    approved_at: row.approved_at || null,
+    rejected_at: row.rejected_at || null,
+    repair_started_at: row.repair_started_at || null,
+    repair_completed_at: row.repair_completed_at || null,
+    reserved_at: row.reserved_at || null,
+    sold_at: row.sold_at || null,
+    transfer_history: row.transfer_history || [],
+    inventory_product: row.inventory_product === null || row.inventory_product === undefined ? null : String(row.inventory_product),
+    created_by: row.created_by === null || row.created_by === undefined ? null : String(row.created_by),
+    updated_by: row.updated_by === null || row.updated_by === undefined ? null : String(row.updated_by),
+    approved_by: row.approved_by === null || row.approved_by === undefined ? null : String(row.approved_by),
+    rejected_by: row.rejected_by === null || row.rejected_by === undefined ? null : String(row.rejected_by),
+    deleted_by: row.deleted_by === null || row.deleted_by === undefined ? null : String(row.deleted_by),
+    is_deleted: Boolean(row.is_deleted),
+    deleted_at: row.deleted_at || null,
+    created_at: row.created_at,
+    updated_at: row.updated_at || row.created_at,
+    days_in_inventory: Number(row.days_in_inventory || 0),
+    physical_inspection: row.physical_inspection || {},
+    functional_inspection: row.functional_inspection || {},
+    damage_detection: row.damage_detection || {},
+  };
+}
+
+function toBuybackPayload(payload: Partial<CreateBuybackPayload> & { status?: BuybackWorkflowStatus }): Record<string, unknown> {
+  return {
+    ...(payload.imei !== undefined ? { imei: payload.imei } : {}),
+    ...(payload.serial_number !== undefined ? { serial_number: payload.serial_number } : {}),
+    ...(payload.customer !== undefined ? { customer: payload.customer } : {}),
+    ...(payload.store_ref !== undefined ? { store_ref: payload.store_ref } : {}),
+    ...(payload.assigned_store_ref !== undefined ? { assigned_store_ref: payload.assigned_store_ref } : {}),
+    ...(payload.assigned_technician !== undefined ? { assigned_technician: payload.assigned_technician } : {}),
+    ...(payload.brand !== undefined ? { brand: payload.brand } : {}),
+    ...(payload.model !== undefined ? { model: payload.model } : {}),
+    ...(payload.variant !== undefined ? { variant: payload.variant } : {}),
+    ...(payload.color !== undefined ? { color: payload.color } : {}),
+    ...(payload.storage !== undefined ? { storage: payload.storage } : {}),
+    ...(payload.ram !== undefined ? { ram: payload.ram } : {}),
+    ...(payload.battery_health !== undefined ? { battery_health: payload.battery_health } : {}),
+    ...(payload.accessories_received !== undefined ? { accessories_received: payload.accessories_received } : {}),
+    ...(payload.box_available !== undefined ? { box_available: payload.box_available } : {}),
+    ...(payload.charger_available !== undefined ? { charger_available: payload.charger_available } : {}),
+    ...(payload.physical_inspection !== undefined ? { physical_inspection: payload.physical_inspection } : {}),
+    ...(payload.functional_inspection !== undefined ? { functional_inspection: payload.functional_inspection } : {}),
+    ...(payload.damage_detection !== undefined ? { damage_detection: payload.damage_detection } : {}),
+    ...(payload.condition !== undefined ? { condition: payload.condition } : {}),
+    ...(payload.market_value !== undefined ? { market_value: toNumber(payload.market_value) } : {}),
+    ...(payload.condition_deduction !== undefined ? { condition_deduction: toNumber(payload.condition_deduction) } : {}),
+    ...(payload.repair_deduction !== undefined ? { repair_deduction: toNumber(payload.repair_deduction) } : {}),
+    ...(payload.final_valuation !== undefined ? { final_valuation: toNumber(payload.final_valuation) } : {}),
+    ...(payload.negotiated_price !== undefined ? { negotiated_price: toNumber(payload.negotiated_price) } : {}),
+    ...(payload.exchange_credit_amount !== undefined ? { exchange_credit_amount: toNumber(payload.exchange_credit_amount) } : {}),
+    ...(payload.cash_payout_amount !== undefined ? { cash_payout_amount: toNumber(payload.cash_payout_amount) } : {}),
+    ...(payload.suggested_resale_price !== undefined ? { suggested_resale_price: toNumber(payload.suggested_resale_price) } : {}),
+    ...(payload.expected_profit_margin !== undefined ? { expected_profit_margin: toNumber(payload.expected_profit_margin) } : {}),
+    ...(payload.exchange_credit_enabled !== undefined ? { exchange_credit_enabled: payload.exchange_credit_enabled } : {}),
+    ...(payload.payout_method !== undefined ? { payout_method: payload.payout_method } : {}),
+    ...(payload.linked_sale_id !== undefined ? { linked_sale_id: payload.linked_sale_id } : {}),
+    ...(payload.rack_location !== undefined ? { rack_location: payload.rack_location } : {}),
+    ...(payload.notes !== undefined ? { notes: payload.notes } : {}),
+    ...(payload.inspection_notes !== undefined ? { inspection_notes: payload.inspection_notes } : {}),
+    ...(payload.pricing_notes !== undefined ? { pricing_notes: payload.pricing_notes } : {}),
+    ...(payload.repair_notes !== undefined ? { repair_notes: payload.repair_notes } : {}),
+    ...(payload.resale_notes !== undefined ? { resale_notes: payload.resale_notes } : {}),
+    ...(payload.status !== undefined ? { status: payload.status } : {}),
+  };
+}
+
 export async function listBuybacks(): Promise<ApiBuyback[]> {
   const result = await apiRequest<{ rows: ApiBuyback[] }>("/buybacks");
-  return result.rows.map((entry) => ({
-    ...entry,
-    id: String(entry.id),
-    customer: entry.customer === null || entry.customer === undefined ? null : String(entry.customer),
-    store_ref: entry.store_ref === null || entry.store_ref === undefined ? null : String(entry.store_ref),
-  }));
+  return result.rows.map(normalizeBuybackRow);
+}
+
+export async function listBuybacksPage(params: BuybackListParams = {}): Promise<BuybackListResponse> {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    searchParams.set(key, String(value));
+  });
+
+  const query = searchParams.toString();
+  const result = await apiRequest<BuybackListResponse>(`/buybacks${query ? `?${query}` : ""}`);
+  return {
+    ...result,
+    rows: (result.rows || []).map(normalizeBuybackRow),
+  };
 }
 
 export async function createBuyback(payload: CreateBuybackPayload): Promise<ApiBuyback> {
   const row = await apiRequest<ApiBuyback>("/buybacks", {
     method: "POST",
-    body: JSON.stringify({
-      ...payload,
-      cash_amount: toNumber(payload.cash_amount),
-      online_amount: toNumber(payload.online_amount),
-      exchange_amount: toNumber(payload.exchange_amount),
-      market_value: toNumber(payload.market_value),
-      negotiated_price: toNumber(payload.negotiated_price),
-    }),
+    body: JSON.stringify(toBuybackPayload(payload)),
   });
 
-  return {
-    ...row,
-    id: String(row.id),
-    customer: row.customer === null || row.customer === undefined ? null : String(row.customer),
-    store_ref: row.store_ref === null || row.store_ref === undefined ? null : String(row.store_ref),
-  };
+  return normalizeBuybackRow(row);
 }
 
-export async function updateBuyback(id: number, payload: Partial<CreateBuybackPayload>): Promise<ApiBuyback> {
+export async function updateBuyback(id: string, payload: Partial<CreateBuybackPayload> & { status?: BuybackWorkflowStatus }): Promise<ApiBuyback> {
   const row = await apiRequest<ApiBuyback>(`/buybacks/${id}`, {
     method: "PATCH",
-    body: JSON.stringify({
-      ...payload,
-      ...(payload.cash_amount !== undefined ? { cash_amount: toNumber(payload.cash_amount) } : {}),
-      ...(payload.online_amount !== undefined ? { online_amount: toNumber(payload.online_amount) } : {}),
-      ...(payload.exchange_amount !== undefined ? { exchange_amount: toNumber(payload.exchange_amount) } : {}),
-      ...(payload.market_value !== undefined ? { market_value: toNumber(payload.market_value) } : {}),
-      ...(payload.negotiated_price !== undefined ? { negotiated_price: toNumber(payload.negotiated_price) } : {}),
-    }),
+    body: JSON.stringify(toBuybackPayload(payload)),
   });
 
-  return {
-    ...row,
-    id: String(row.id),
-    customer: row.customer === null || row.customer === undefined ? null : String(row.customer),
-    store_ref: row.store_ref === null || row.store_ref === undefined ? null : String(row.store_ref),
-  };
+  return normalizeBuybackRow(row);
 }
 
-export async function deleteBuyback(id: number): Promise<void> {
+export async function deleteBuyback(id: string): Promise<void> {
   await apiRequest<void>(`/buybacks/${id}`, { method: "DELETE" });
 }
 
