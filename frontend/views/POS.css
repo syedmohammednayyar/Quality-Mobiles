@@ -124,6 +124,35 @@
   font-family: var(--font-family);
 }
 
+.search-btn,
+.search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.search-btn .material-icons,
+.search-clear .material-icons {
+  font-size: 18px;
+}
+
+.search-btn:hover,
+.search-clear:hover {
+  background: color-mix(in srgb, var(--bg-primary) 88%, var(--bg-secondary));
+}
+
+.search-clear {
+  margin-left: 6px;
+  border-color: color-mix(in srgb, var(--border-color) 70%, transparent);
+}
+
 .search-field::placeholder {
   color: var(--text-tertiary);
 }

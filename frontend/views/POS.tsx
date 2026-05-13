@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { PaymentMethod, User } from '../types';
 import {
   createSale,
@@ -111,6 +111,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -350,16 +351,35 @@ const POS: React.FC<POSProps> = ({ user }) => {
           </div>
 
           <div className="search-section">
-            <div className="search-input-wrap">
-              <input
-                type="text"
-                placeholder="Search products..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="search-field"
-                autoFocus
-              />
-            </div>
+              <div className="search-input-wrap">
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  placeholder="Search products..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="search-field"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  className="search-btn"
+                  onClick={() => searchInputRef.current?.focus()}
+                  aria-label="Focus search"
+                >
+                  <span className="material-icons">search</span>
+                </button>
+                {searchQuery && (
+                  <button
+                    type="button"
+                    className="search-clear"
+                    onClick={() => { setSearchQuery(''); searchInputRef.current?.focus(); }}
+                    aria-label="Clear search"
+                  >
+                    <span className="material-icons">close</span>
+                  </button>
+                )}
+              </div>
           </div>
 
           <div className="category-tabs">
