@@ -17,7 +17,6 @@ type PosProduct = {
   brand: string;
   model: string;
   retailPrice: number;
-  barcode: string;
   stockQuantity: number;
   category: 'New Phones' | 'Used Phones' | 'Accessories' | 'Services';
   avatarIcon: string;
@@ -30,10 +29,10 @@ type PosCartItem = PosProduct & {
 };
 
 const categories = [
-  { id: 'new-phones', label: 'New Phones', icon: 'NP' },
-  { id: 'used-phones', label: 'Used Phones', icon: 'UP' },
-  { id: 'accessories', label: 'Accessories', icon: 'AC' },
-  { id: 'services', label: 'Services', icon: 'SV' },
+  { id: 'new-phones', label: 'New Phones' },
+  { id: 'used-phones', label: 'Used Phones' },
+  { id: 'accessories', label: 'Accessories' },
+  { id: 'services', label: 'Services' },
 ];
 
 const categorizeProduct = (product: ApiProduct): PosProduct['category'] => {
@@ -70,7 +69,6 @@ const mapProduct = (product: ApiProduct): PosProduct => {
     brand: product.name.split(' ')[0] || 'Generic',
     model: product.job_id || product.imei || product.sku || 'N/A',
     retailPrice: Number(product.price),
-    barcode: product.barcode || product.imei || product.sku,
     stockQuantity: product.stock_quantity,
     category,
     avatarIcon: getCategoryIcon(category),
@@ -185,7 +183,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
         || (selectedCategory === 'services' && p.category === 'Services');
 
       const matchSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase())
-        || p.barcode.toLowerCase().includes(searchQuery.toLowerCase());
+        || p.model.toLowerCase().includes(searchQuery.toLowerCase());
 
       return matchCategory && matchSearch;
     });
@@ -196,8 +194,8 @@ const POS: React.FC<POSProps> = ({ user }) => {
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       list.sort((a, b) => {
-        const aStarts = a.name.toLowerCase().startsWith(q) || a.barcode.toLowerCase().startsWith(q) ? 1 : 0;
-        const bStarts = b.name.toLowerCase().startsWith(q) || b.barcode.toLowerCase().startsWith(q) ? 1 : 0;
+        const aStarts = a.name.toLowerCase().startsWith(q) || a.model.toLowerCase().startsWith(q) ? 1 : 0;
+        const bStarts = b.name.toLowerCase().startsWith(q) || b.model.toLowerCase().startsWith(q) ? 1 : 0;
         if (aStarts !== bStarts) return bStarts - aStarts;
         return b.stockQuantity - a.stockQuantity;
       });
@@ -352,10 +350,10 @@ const POS: React.FC<POSProps> = ({ user }) => {
           </div>
 
           <div className="search-section">
-            <div className="barcode-input">
+            <div className="search-input-wrap">
               <input
                 type="text"
-                placeholder="Barcode or search..."
+                placeholder="Search products..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="search-field"
@@ -371,8 +369,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
                 className={`category-tab ${selectedCategory === cat.id ? 'active' : ''}`}
                 onClick={() => setSelectedCategory(cat.id)}
               >
-                <span>{cat.icon}</span>
-                <span className="label">{cat.label}</span>
+                {cat.label}
               </button>
             ))}
           </div>
@@ -467,7 +464,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
                 <div key={item.id} className="cart-item">
                   <div className="item-details">
                     <h4 className="item-name">{item.name}</h4>
-                    <p className="item-code">{item.barcode}</p>
+                    <p className="item-code">{item.model}</p>
                   </div>
                   <div className="item-quantity">
                     <button onClick={() => updateQuantity(item.id, item.cartQuantity - 1)}>-</button>
