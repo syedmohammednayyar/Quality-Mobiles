@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Customer } from "../../db/models.js";
 import { HttpError } from "../../utils/httpError.js";
 import { assertStoreAccess, isAdmin } from "../../utils/storeAccess.js";
 import {
@@ -68,6 +69,9 @@ export async function updateCustomerHandler(req, res, next) {
   try {
     const params = customerIdParamsSchema.parse(req.params);
     const payload = updateCustomerSchema.parse(req.body);
+    const existing = await Customer.findById(params.customerId).select("store").lean();
+    if (!existing) throw new HttpError(404, "Customer not found", "CUSTOMER_NOT_FOUND");
+    if (existing.store) assertStoreAccess(req.auth, existing.store);
     if (payload.store_ref) assertStoreAccess(req.auth, payload.store_ref);
 
     const row = await updateCustomer(params.customerId, {
@@ -96,6 +100,9 @@ export async function updateCustomerHandler(req, res, next) {
 export async function deleteCustomerHandler(req, res, next) {
   try {
     const params = customerIdParamsSchema.parse(req.params);
+    const existing = await Customer.findById(params.customerId).select("store").lean();
+    if (!existing) throw new HttpError(404, "Customer not found", "CUSTOMER_NOT_FOUND");
+    if (existing.store) assertStoreAccess(req.auth, existing.store);
     await deleteCustomer(params.customerId);
     res.status(204).send();
   } catch (error) {

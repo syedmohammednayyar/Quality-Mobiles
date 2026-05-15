@@ -1,84 +1,151 @@
 import mongoose from "mongoose";
-import { Role, User } from "../../db/models.js";
+import {
+  AuditLog,
+  Employee,
+  EmployeeCredential,
+  EmployeeStoreAssignment,
+  User,
+} from "../../db/models.js";
 import { HttpError } from "../../utils/httpError.js";
 import { signAccessToken } from "../../utils/jwt.js";
-import { hashPassword, verifyPassword } from "../../utils/password.js";
+import { verifyPassword } from "../../utils/password.js";
 
-async function getAuthUserByUsername(username) {
-  const identifier = username.toLowerCase();
+const MAX_LOGIN_ATTEMPTS = 5;
+
+async function findAuthRecordByIdentifier(identifier) {
+  const normalized = identifier.toLowerCase();
   const user = await User.findOne({
-    $or: [{ username: identifier }, { email: identifier }],
+    $or: [{ username: normalized }, { email: normalized }],
   })
-    .populate('roles')
+    .populate("roles")
     .exec();
 
   if (!user) return null;
 
-  // Legacy/dirty data guard: treat missing password hash as non-authenticatable.
-  if (!user.passwordHash) return null;
+  const employee = await Employee.findOne({ user: user._id, isActive: true }).exec();
+  const credential = await EmployeeCredential.findOne({ user: user._id }).exec();
+  const assignments = employee
+    ? await EmployeeStoreAssignment.find({ employee: employee._id, status: "active" }).exec()
+    : [];
 
-  // We also need the store_id from Employee record
-  // In a real MongoDB app, we might embed store_id in User or use a separate lookup
-  // For now, let's keep the logic similar but with Mongoose
-  const employee = await mongoose.model('Employee').findOne({ user: user._id, isActive: true });
-
-  return {
-    id: user._id.toString(),
-    username: user.username || user.email,
-    email: user.email,
-    password_hash: user.passwordHash,
-    is_active: user.isActive !== false,
-    roles: user.roles.map(r => r.name),
-    store_id: employee ? employee.store.toString() : null
-  };
+  return { user, employee, credential, assignments };
 }
 
-function resolveRoleName(role) {
-  const normalized = String(role || "").toLowerCase();
-  if (normalized === "admin") return "admin";
-  if (normalized === "manager") return "manager";
-  if (normalized === "employee") return "cashier";
-  return null;
+function ensureApprovedCredential(credential, { allowWithoutCredential = false } = {}) {
+  if (!credential) {
+    if (allowWithoutCredential) return;
+    throw new HttpError(403, "Credential is not provisioned", "AUTH_CREDENTIAL_NOT_FOUND");
+  }
+  if (credential.accountLocked || credential.status === "locked") {
+    throw new HttpError(423, "Account is locked. Contact admin.", "AUTH_ACCOUNT_LOCKED");
+  }
+  if (credential.approvalStatus !== "approved" || credential.status !== "approved") {
+    if (credential.approvalStatus === "rejected" || credential.status === "rejected") {
+      throw new HttpError(403, credential.rejectedReason || "Signup request rejected", "AUTH_SIGNUP_REJECTED");
+    }
+    if (credential.status === "suspended") {
+      throw new HttpError(403, "Account suspended by administrator", "AUTH_ACCOUNT_SUSPENDED");
+    }
+    if (credential.status === "deactivated") {
+      throw new HttpError(403, "Account deactivated", "AUTH_ACCOUNT_DEACTIVATED");
+    }
+    throw new HttpError(403, "Account pending approval", "AUTH_PENDING_APPROVAL");
+  }
 }
 
-export async function signup(input) {
-  const email = input.email.trim().toLowerCase();
-  const fullName = input.name.trim();
-  const roleName = resolveRoleName(input.role);
-
-  if (!roleName) {
-    throw new HttpError(400, "Invalid role", "AUTH_INVALID_ROLE");
+async function registerFailedLogin(credential, userId) {
+  if (!credential) return;
+  credential.loginAttempts = Number(credential.loginAttempts || 0) + 1;
+  if (credential.loginAttempts >= MAX_LOGIN_ATTEMPTS) {
+    credential.accountLocked = true;
+    credential.status = "locked";
   }
-
-  const existing = await User.findOne({
-    $or: [{ username: email }, { email }],
-  }).exec();
-
-  if (existing) {
-    throw new HttpError(409, "User already exists", "AUTH_USER_EXISTS");
-  }
-
-  let role = await Role.findOne({ name: roleName }).exec();
-  if (!role) {
-    role = await Role.create({ name: roleName, description: roleName });
-  }
-
-  const passwordHash = await hashPassword(input.password);
-  const user = await User.create({
-    username: email,
-    email,
-    fullName,
-    passwordHash,
-    isActive: true,
-    roles: [role._id],
+  await credential.save();
+  await AuditLog.create({
+    user: userId || null,
+    action: "auth.login.failed",
+    entityType: "employee_credential",
+    entityId: credential._id.toString(),
+    status: "failure",
+    notes: `Failed login attempt #${credential.loginAttempts}`,
   });
+}
+
+async function registerSuccessfulLogin(credential, userId) {
+  if (!credential) return;
+  credential.loginAttempts = 0;
+  credential.lastLogin = new Date();
+  credential.accountLocked = false;
+  if (credential.status === "locked") credential.status = "approved";
+  await credential.save();
+  await AuditLog.create({
+    user: userId || null,
+    action: "auth.login.success",
+    entityType: "employee_credential",
+    entityId: credential._id.toString(),
+    status: "success",
+  });
+}
+
+function pickPrimaryStoreId(assignments, fallbackStoreId) {
+  if (assignments && assignments.length > 0) return String(assignments[0].store);
+  return fallbackStoreId ? String(fallbackStoreId) : null;
+}
+
+export async function login(input) {
+  const record = await findAuthRecordByIdentifier(input.username);
+
+  if (!record?.user || !record.user.isActive) {
+    throw new HttpError(401, "Invalid username or password", "AUTH_INVALID_CREDENTIALS");
+  }
+
+  const credentialPasswordHash = record.credential?.passwordHash || record.user.passwordHash;
+  const passwordOk = await verifyPassword(input.password, credentialPasswordHash);
+  if (!passwordOk) {
+    await registerFailedLogin(record.credential, record.user._id);
+    throw new HttpError(401, "Invalid username or password", "AUTH_INVALID_CREDENTIALS");
+  }
+
+  const roles = (record.user.roles || []).map((r) => r.name);
+  if (roles.length === 0) {
+    throw new HttpError(403, "User has no roles assigned", "AUTH_ROLE_MISSING");
+  }
+
+  const isAdmin = roles.includes("admin");
+  if (!record.credential && record.employee) {
+    await EmployeeCredential.create({
+      employee: record.employee._id,
+      user: record.user._id,
+      email: record.user.email,
+      passwordHash: record.user.passwordHash,
+      status: "approved",
+      approvalStatus: "approved",
+      approvedBy: record.user._id,
+      approvedAt: new Date(),
+      loginAttempts: 0,
+      accountLocked: false,
+    });
+    record.credential = await EmployeeCredential.findOne({ user: record.user._id }).exec();
+  }
+
+  ensureApprovedCredential(record.credential, { allowWithoutCredential: isAdmin && !record.employee });
+
+  const storeId = isAdmin
+    ? null
+    : pickPrimaryStoreId(record.assignments, record.employee?.store ? String(record.employee.store) : null);
+
+  if (!isAdmin && !storeId) {
+    throw new HttpError(403, "No active store assignment for this account", "AUTH_STORE_ASSIGNMENT_REQUIRED");
+  }
+
+  await registerSuccessfulLogin(record.credential, record.user._id);
 
   const authUser = {
-    id: user._id.toString(),
-    username: user.username,
-    email: user.email,
-    roles: [role.name],
-    store_id: null,
+    id: record.user._id.toString(),
+    username: record.user.username || record.user.email,
+    email: record.user.email,
+    roles,
+    store_id: storeId,
   };
 
   const accessToken = signAccessToken({
@@ -92,73 +159,23 @@ export async function signup(input) {
   return { accessToken, user: authUser };
 }
 
-export async function login(input) {
-  try {
-    const user = await getAuthUserByUsername(input.username);
-
-    if (!user || !user.is_active) {
-      throw new HttpError(
-        401,
-        "Invalid username or password",
-        "AUTH_INVALID_CREDENTIALS",
-      );
-    }
-
-    const passwordOk = await verifyPassword(input.password, user.password_hash);
-    if (!passwordOk) {
-      throw new HttpError(
-        401,
-        "Invalid username or password",
-        "AUTH_INVALID_CREDENTIALS",
-      );
-    }
-
-    if (user.roles.length === 0) {
-      throw new HttpError(403, "User has no roles assigned", "AUTH_ROLE_MISSING");
-    }
-
-    const authUser = {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      roles: user.roles,
-      store_id: user.store_id,
-    };
-
-    console.log('authUser:', authUser);
-    console.log('authUser.id type:', typeof authUser.id, 'value:', authUser.id);
-    console.log('authUser.store_id type:', typeof authUser.store_id, 'value:', authUser.store_id);
-
-    const accessToken = signAccessToken({
-      id: authUser.id,
-      userId: authUser.id,
-      username: authUser.username,
-      roles: authUser.roles,
-      store_id: authUser.store_id,
-    });
-
-    console.log('Token signed successfully');
-    return { accessToken, user: authUser };
-  } catch (error) {
-    console.error('Error in login function:', error);
-    throw error;
-  }
-}
-
 export async function getCurrentUser(userId) {
-  const user = await User.findById(userId).populate('roles').exec();
-
+  const user = await User.findById(userId).populate("roles").exec();
   if (!user || !user.isActive) {
     throw new HttpError(404, "User not found", "AUTH_USER_NOT_FOUND");
   }
 
-  const employee = await mongoose.model('Employee').findOne({ user: user._id, isActive: true });
+  const employee = await mongoose.model("Employee").findOne({ user: user._id, isActive: true });
+  const assignments = employee
+    ? await EmployeeStoreAssignment.find({ employee: employee._id, status: "active" }).exec()
+    : [];
+  const store_id = pickPrimaryStoreId(assignments, employee?.store ? String(employee.store) : null);
 
   return {
     id: user._id.toString(),
     username: user.username,
     email: user.email,
-    roles: user.roles.map(r => r.name),
-    store_id: employee ? employee.store.toString() : null,
+    roles: user.roles.map((r) => r.name),
+    store_id,
   };
 }

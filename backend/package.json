@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "audit:database": "node src/scripts/databaseAudit.js",
     "validate:production": "node src/scripts/productionValidation.js"
   },
   "dependencies": {

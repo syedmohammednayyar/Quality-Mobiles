@@ -7,6 +7,8 @@ import {
   Role,
   Employee,
   Product,
+  BulkInventory,
+  SerializedInventory,
   StoreInventory,
   StockLedger,
   Sale,
@@ -57,6 +59,14 @@ function formatError(error) {
 }
 
 async function getInventoryQuantity(storeId, productId) {
+  const bulk = await BulkInventory.findOne({ store: storeId, product: productId });
+  if (bulk) return Number(bulk.quantity || 0);
+  const serializedCount = await SerializedInventory.countDocuments({
+    store: storeId,
+    product: productId,
+    status: "in_stock",
+  });
+  if (serializedCount > 0) return serializedCount;
   const si = await StoreInventory.findOne({ store: storeId });
   if (!si) return 0;
   const item = si.items.find(
@@ -163,6 +173,8 @@ async function cleanup(created) {
   }
 
   await Product.deleteMany({ _id: { $in: created.productIds } });
+  await BulkInventory.deleteMany({ product: { $in: created.productIds } });
+  await SerializedInventory.deleteMany({ product: { $in: created.productIds } });
   await Employee.deleteMany({ _id: { $in: created.employeeIds } });
   await User.deleteMany({ _id: { $in: created.userIds } });
   await Customer.deleteMany({ _id: { $in: created.customerIds } });
@@ -504,7 +516,7 @@ async function run() {
     const concurrentProduct = await createProduct({
       sku: `VAL-CON-${runToken}`,
       name: `Concurrent Product ${runToken}`,
-      category: "new_phone",
+      category: "accessories",
       price: 90,
       stockQuantity: 1,
       primaryStoreRef: storeId,

@@ -22,7 +22,7 @@ const createEmployeeSchema = z.object({
   email: z.string().email().optional().or(z.literal("")),
   phone: z.string().max(40).optional(),
   username: z.string().max(100).optional(),
-  password: z.string().min(6).max(120).optional(),
+  password: z.string().min(8).max(120).optional(),
   join_date: z.string().optional().nullable(),
 });
 
@@ -33,7 +33,7 @@ const updateEmployeeSchema = z.object({
   email: z.string().email().optional(),
   phone: z.string().max(40).optional(),
   username: z.string().min(1).max(100).optional(),
-  password: z.string().min(6).max(120).optional(),
+  password: z.string().min(8).max(120).optional(),
   join_date: z.string().optional().nullable(),
 });
 
@@ -41,9 +41,9 @@ const employeeIdParamsSchema = z.object({
   employeeId: objectIdSchema,
 });
 
-export async function listEmployeesHandler(_req, res, next) {
+export async function listEmployeesHandler(req, res, next) {
   try {
-    const rows = await listEmployees();
+    const rows = await listEmployees(req.auth);
     res.status(200).json({ rows });
   } catch (error) {
     next(error);
@@ -62,7 +62,7 @@ export async function createEmployeeHandler(req, res, next) {
       username: payload.username,
       password: payload.password,
       joinDate: payload.join_date,
-    });
+    }, req.auth);
     res.status(201).json(row);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -93,7 +93,7 @@ export async function updateEmployeeHandler(req, res, next) {
       username: payload.username,
       password: payload.password,
       joinDate: payload.join_date,
-    });
+    }, req.auth);
 
     res.status(200).json(row);
   } catch (error) {
@@ -114,7 +114,7 @@ export async function updateEmployeeHandler(req, res, next) {
 export async function deleteEmployeeHandler(req, res, next) {
   try {
     const params = employeeIdParamsSchema.parse(req.params);
-    await deleteEmployee(params.employeeId);
+    await deleteEmployee(params.employeeId, req.auth);
     res.status(204).send();
   } catch (error) {
     if (error instanceof z.ZodError) {

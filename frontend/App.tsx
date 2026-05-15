@@ -93,8 +93,8 @@ const App: React.FC = () => {
 
   const privileged = isPrivilegedUser(user);
   const salesUser = isSalesUser(user);
+  const managerOrStaff = user?.role === 'Manager' || user?.role === 'Sales' || user?.role === 'Staff';
   const adminOrManager = user?.role === 'Admin' || user?.role === 'Manager';
-  const adminOnly = user?.role === 'Admin';
   const defaultPath = privileged ? '/dashboard' : '/pos';
 
   return (
@@ -137,14 +137,14 @@ const App: React.FC = () => {
                   <Route path="/dashboard" element={privileged ? <Dashboard user={user} /> : <Navigate to={defaultPath} replace />} />
                   <Route path="/sales" element={salesUser ? <Sales user={user} /> : <Navigate to={defaultPath} replace />} />
                   <Route path="/pos" element={salesUser ? <POS user={user} /> : <Navigate to={defaultPath} replace />} />
-                  <Route path="/buyback" element={adminOrManager ? <Buyback user={user} /> : <Navigate to={defaultPath} replace />} />
-                  <Route path="/inventory" element={privileged ? <Inventory user={user} stores={stores} /> : <Navigate to={defaultPath} replace />} />
-                  <Route path="/repairs" element={adminOrManager ? <Repairs user={user} /> : <Navigate to={defaultPath} replace />} />
+                  <Route path="/buyback" element={adminOrManager || user?.role === 'Sales' || user?.role === 'Staff' ? <Buyback user={user} /> : <Navigate to={defaultPath} replace />} />
+                  <Route path="/inventory" element={adminOrManager ? <Inventory user={user} stores={stores} /> : <Navigate to={defaultPath} replace />} />
+                  <Route path="/repairs" element={managerOrStaff ? <Repairs user={user} /> : <Navigate to={defaultPath} replace />} />
                   <Route path="/accessories" element={salesUser ? <Accessories /> : <Navigate to={defaultPath} replace />} />
                   <Route path="/financial" element={<Navigate to="/reports" replace />} />
                   <Route path="/reports" element={privileged ? <Reports user={user} /> : <Navigate to={defaultPath} replace />} />
                   <Route path="/customers" element={salesUser || privileged ? <Customers user={user} /> : <Navigate to={defaultPath} replace />} />
-                  <Route path="/employees" element={adminOnly ? <Employees user={user} stores={stores} onStoresUpdate={refreshStores} /> : <Navigate to={defaultPath} replace />} />
+                  <Route path="/employees" element={privileged ? <Employees user={user} stores={stores} onStoresUpdate={refreshStores} /> : <Navigate to={defaultPath} replace />} />
                   <Route path="/" element={<Navigate to={defaultPath} replace />} />
                   <Route path="/login" element={<Navigate to={defaultPath} replace />} />
                 </Routes>

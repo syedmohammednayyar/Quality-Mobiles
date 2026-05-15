@@ -1,7 +1,7 @@
 .buyback-page-shell {
   display: grid;
-  gap: 20px;
-  padding-bottom: 24px;
+  gap: 24px;
+  padding-bottom: 32px;
 }
 
 .buyback-hero {
@@ -111,13 +111,13 @@
 .buyback-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.55fr);
-  gap: 20px;
+  gap: 24px;
   align-items: start;
 }
 
 .buyback-main-column {
   display: grid;
-  gap: 20px;
+  gap: 24px;
 }
 
 .buyback-sidebar {
@@ -129,12 +129,12 @@
   position: sticky;
   top: 20px;
   display: grid;
-  gap: 18px;
+  gap: 20px;
 }
 
 .buyback-panel,
 .buyback-sidebar {
-  padding: 22px;
+  padding: 24px;
   border-radius: 22px;
   border: 1px solid color-mix(in srgb, var(--border-color) 80%, var(--color-primary-100));
   background:
@@ -147,7 +147,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 18px;
+  margin-bottom: 20px;
 }
 
 .panel-header.compact {
@@ -171,7 +171,7 @@
 
 .panel-grid {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .panel-grid-2 {
@@ -185,7 +185,8 @@
 .field-block {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 9px;
+  min-width: 0;
 }
 
 .field-block-full {
@@ -202,8 +203,8 @@
 
 .form-input {
   width: 100%;
-  min-height: 44px;
-  padding: 11px 14px;
+  min-height: 46px;
+  padding: 12px 14px;
   border-radius: 14px;
   border: 1px solid var(--border-color);
   background: var(--bg-secondary);
@@ -220,12 +221,12 @@
 }
 
 .form-textarea {
-  min-height: 96px;
+  min-height: 110px;
   resize: vertical;
 }
 
 .form-textarea-tall {
-  min-height: 132px;
+  min-height: 148px;
 }
 
 .monospace {
@@ -246,7 +247,7 @@
 .panel-actions-sticky {
   position: sticky;
   bottom: 16px;
-  padding: 14px;
+  padding: 16px;
   border-radius: 18px;
   background: color-mix(in srgb, var(--bg-primary) 92%, var(--color-primary-50));
   border: 1px solid color-mix(in srgb, var(--border-color) 84%, var(--color-primary-100));
@@ -326,7 +327,7 @@
 .history-strip {
   display: grid;
   gap: 12px;
-  margin-top: 18px;
+  margin-top: 20px;
 }
 
 .history-strip h3,
@@ -383,7 +384,7 @@
 }
 
 .assessment-card {
-  padding: 16px;
+  padding: 18px;
   border-radius: 18px;
   border: 1px solid color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
   background: color-mix(in srgb, var(--bg-secondary) 85%, var(--color-primary-50));
@@ -473,13 +474,13 @@
 .pricing-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  gap: 14px;
 }
 
 .pricing-card {
   display: grid;
   gap: 8px;
-  padding: 14px;
+  padding: 16px;
   border-radius: 18px;
   border: 1px solid color-mix(in srgb, var(--border-color) 78%, var(--color-primary-100));
   background: linear-gradient(180deg, var(--bg-primary), color-mix(in srgb, var(--bg-primary) 90%, var(--color-primary-50)));
@@ -569,7 +570,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px;
+  padding: 16px;
   border-radius: 18px;
   border: 1px solid color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
   background: color-mix(in srgb, var(--bg-secondary) 84%, var(--color-primary-50));
@@ -582,7 +583,7 @@
 
 .detail-stack {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .detail-item {
@@ -590,7 +591,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 14px 16px;
   border-radius: 16px;
   border: 1px solid color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
   background: color-mix(in srgb, var(--bg-secondary) 82%, var(--bg-primary));
@@ -613,7 +614,7 @@
 .transfer-box {
   display: grid;
   gap: 10px;
-  padding: 14px;
+  padding: 16px;
   border-radius: 18px;
   border: 1px solid color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
   background: color-mix(in srgb, var(--bg-secondary) 84%, var(--color-primary-50));
@@ -630,8 +631,8 @@
 .toolbar-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 14px;
+  margin-bottom: 18px;
 }
 
 .table-shell {
@@ -653,7 +654,7 @@
 
 .buyback-table th,
 .buyback-table td {
-  padding: 13px 12px;
+  padding: 14px 14px;
   text-align: left;
   border-bottom: 1px solid color-mix(in srgb, var(--border-color) 88%, var(--color-primary-100));
   vertical-align: top;
@@ -687,8 +688,8 @@
 .expanded-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-  padding: 16px;
+  gap: 16px;
+  padding: 18px;
 }
 
 .expanded-grid h4 {
@@ -764,7 +765,30 @@
 
 .pagination-bar {
   margin-top: 16px;
-  padding-top: 4px;
+  padding-top: 8px;
+}
+
+.buyback-table-panel .table-actions-row {
+  margin-bottom: 14px;
+}
+
+.buyback-table-panel .table-actions-row .btn {
+  min-width: 140px;
+}
+
+.buyback-table-panel .field-block .form-input,
+.buyback-main-column .field-block .form-input,
+.buyback-sidebar .field-block .form-input {
+  margin: 0;
+}
+
+.buyback-table-panel .field-block label,
+.buyback-main-column .field-block label {
+  line-height: 1.2;
+}
+
+.buyback-table-panel .inline-meta {
+  margin-left: auto;
 }
 
 .skeleton-row td {
@@ -839,7 +863,7 @@
 
 @media (max-width: 860px) {
   .buyback-page-shell {
-    gap: 14px;
+    gap: 16px;
   }
 
   .buyback-panel,
@@ -876,6 +900,10 @@
 
   .buyback-table {
     min-width: 1180px;
+  }
+
+  .buyback-table-panel .inline-meta {
+    margin-left: 0;
   }
 
   .status-chip-row,

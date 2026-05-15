@@ -249,6 +249,7 @@ function getRowTitle(item: ApiBuyback): string {
 }
 
 const Buyback = ({ user }: { user: User }) => {
+  const isAdmin = user.role === 'Admin';
   const [searchParams] = useSearchParams();
   const initialSearch = searchParams.get('q') || '';
   const initialStore = searchParams.get('store') || user.assignedStoreId || '';
@@ -686,6 +687,7 @@ const Buyback = ({ user }: { user: User }) => {
         </div>
       )}
 
+      {!isAdmin && (
       <div className="buyback-layout">
         <div className="buyback-main-column">
           <section className="buyback-panel card">
@@ -1120,6 +1122,7 @@ const Buyback = ({ user }: { user: User }) => {
           </div>
         </aside>
       </div>
+      )}
 
       <section className="buyback-panel card buyback-table-panel">
         <div className="panel-header">
@@ -1142,7 +1145,6 @@ const Buyback = ({ user }: { user: User }) => {
         </div>
 
         <div className="table-actions-row">
-          <button className="btn btn-secondary" onClick={exportCsv}>Export CSV</button>
           <button className="btn btn-secondary" onClick={exportPdf}>Export PDF</button>
           <div className="inline-meta">
             <span>Page {currentPageLabel}</span>
@@ -1203,16 +1205,18 @@ const Buyback = ({ user }: { user: User }) => {
                       <td>
                         <div className="row-actions">
                           <button className="btn btn-secondary btn-sm" onClick={() => { setSelectedRowId(item.id); setExpandedRowId((prev) => (prev === item.id ? null : item.id)); }}>View</button>
-                          <details className="quick-actions">
-                            <summary className="btn btn-primary btn-sm">Actions</summary>
-                            <div className="quick-actions-menu">
-                              {workflowNextMap[item.status_key]?.map((status) => (
-                                <button key={status} onClick={() => void handleTransition(item, status)}>{workflowLabels[status]}</button>
-                              ))}
-                              <button onClick={() => { setSelectedRowId(item.id); setTransferStoreId(item.assigned_store_ref || item.store_ref || ''); }}>Select</button>
-                              <button onClick={() => void handleDelete(item)} className="danger">Archive</button>
-                            </div>
-                          </details>
+                          {!isAdmin && (
+                            <details className="quick-actions">
+                              <summary className="btn btn-primary btn-sm">Actions</summary>
+                              <div className="quick-actions-menu">
+                                {workflowNextMap[item.status_key]?.map((status) => (
+                                  <button key={status} onClick={() => void handleTransition(item, status)}>{workflowLabels[status]}</button>
+                                ))}
+                                <button onClick={() => { setSelectedRowId(item.id); setTransferStoreId(item.assigned_store_ref || item.store_ref || ''); }}>Select</button>
+                                <button onClick={() => void handleDelete(item)} className="danger">Archive</button>
+                              </div>
+                            </details>
+                          )}
                         </div>
                       </td>
                     </tr>

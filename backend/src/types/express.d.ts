@@ -2,12 +2,17 @@ declare global {
   namespace Express {
     interface Request {
       auth?: {
-        id: number;
-        userId: number;
+        id: string;
+        userId: string;
         username: string;
         roles: string[];
-        store_id: number | null;
+        store_id: string | null;
       };
+      storeScope?: {
+        storeId: string;
+        storeCode: string;
+      };
+      storeFilter?: Record<string, unknown>;
     }
   }
 }

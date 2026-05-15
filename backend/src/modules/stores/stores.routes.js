@@ -2,8 +2,6 @@ import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { authorize } from "../../middleware/authorize.js";
 import {
-  createStoreHandler,
-  deleteStoreHandler,
   listStoresHandler,
   updateStoreHandler,
 } from "./stores.controller.js";
@@ -17,14 +15,8 @@ storesRouter.get(
   authorize("admin", "manager", "cashier", "inventory_manager"),
   listStoresHandler,
 );
-storesRouter.post("/", authorize("admin"), createStoreHandler);
 storesRouter.patch(
   "/:storeId",
-  authorize("admin"),
+  authorize("admin", "manager"),
   updateStoreHandler,
-);
-storesRouter.delete(
-  "/:storeId",
-  authorize("admin"),
-  deleteStoreHandler,
 );

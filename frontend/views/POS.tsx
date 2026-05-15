@@ -2,11 +2,15 @@ import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { PaymentMethod, User } from '../types';
 import {
   createSale,
+  lookupSaleJob,
+  listEmployees,
   listProducts,
   listStores,
   isApiError,
+  type ApiEmployee,
   type ApiProduct,
   type ApiStore,
+  type JobLookupResponse,
 } from '../services/api';
 import './POS.css';
 
@@ -92,6 +96,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
   const [cart, setCart] = useState<PosCartItem[]>([]);
   const [products, setProducts] = useState<PosProduct[]>([]);
   const [stores, setStores] = useState<ApiStore[]>([]);
+  const [employees, setEmployees] = useState<ApiEmployee[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('new-phones');
   const [customerName, setCustomerName] = useState('');
@@ -103,6 +108,10 @@ const POS: React.FC<POSProps> = ({ user }) => {
   const [jobNo, setJobNo] = useState('');
   const [icNumber, setIcNumber] = useState('');
   const [salespersonName, setSalespersonName] = useState('');
+  const [attendedByEmployeeId, setAttendedByEmployeeId] = useState('');
+  const [customerSource, setCustomerSource] = useState<'walk_in' | 'referred'>('walk_in');
+  const [referredByEmployeeId, setReferredByEmployeeId] = useState('');
+  const [referralNotes, setReferralNotes] = useState('');
   const [exchangeModel, setExchangeModel] = useState('');
   const [gift, setGift] = useState('');
   const [cashAmount, setCashAmount] = useState('0.00');
@@ -111,16 +120,19 @@ const POS: React.FC<POSProps> = ({ user }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
+  const [jobLookup, setJobLookup] = useState<JobLookupResponse | null>(null);
+  const [jobLookupLoading, setJobLookupLoading] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const storeData = await listStores();
+        const [storeData, employeeData] = await Promise.all([listStores(), listEmployees()]);
         const activeStores = storeData
           .filter((store) => store.is_active)
           .filter((store) => user.role === 'Admin' || !user.assignedStoreId || store.id === user.assignedStoreId);
         setStores(activeStores);
+        setEmployees(employeeData);
         if (activeStores.length > 0) {
           setCurrentStoreId(String(activeStores[0].id));
         }
@@ -150,9 +162,50 @@ const POS: React.FC<POSProps> = ({ user }) => {
     void loadStoreProducts();
   }, [currentStoreId]);
 
+  useEffect(() => {
+    if (!jobNo.trim()) {
+      setJobLookup(null);
+      setJobLookupLoading(false);
+      return;
+    }
+
+    const timer = window.setTimeout(async () => {
+      try {
+        setJobLookupLoading(true);
+        const result = await lookupSaleJob(jobNo.trim());
+        setJobLookup(result);
+        if (result.customer) {
+          setCustomerName(result.customer.name || '');
+          setCustomerPhone(result.customer.phone || '');
+        }
+        if (result.sale) {
+          setSalespersonName(result.sale.salesperson_name || '');
+          setAttendedByEmployeeId(result.sale.attended_by_employee_id || '');
+          setCustomerSource(result.sale.customer_source || 'walk_in');
+          setReferredByEmployeeId(result.sale.referred_by_employee_id || '');
+          setReferralNotes(result.sale.referral_notes || '');
+        }
+      } catch (err) {
+        if (isApiError(err) && err.status === 404) {
+          setJobLookup(null);
+          return;
+        }
+        setError(err instanceof Error ? err.message : 'Failed to lookup job details');
+      } finally {
+        setJobLookupLoading(false);
+      }
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [jobNo]);
+
   const currentStore = useMemo(
     () => stores.find((store) => String(store.id) === currentStoreId) || null,
     [stores, currentStoreId]
+  );
+  const activeSalesmen = useMemo(
+    () => employees.filter((employee) => employee.store_ref === currentStoreId && ['Salesman', 'Staff', 'Manager'].includes(employee.role)),
+    [currentStoreId, employees]
   );
 
   const subtotal = useMemo(
@@ -289,7 +342,11 @@ const POS: React.FC<POSProps> = ({ user }) => {
         exchange_model: exchangeModel.trim(),
         got_amount: gotValue.toFixed(2),
         gift: gift.trim(),
-        salesperson_name: salespersonName.trim(),
+        salesperson_name: (activeSalesmen.find((employee) => employee.id === attendedByEmployeeId)?.name || salespersonName).trim(),
+        attended_by_employee_id: attendedByEmployeeId || null,
+        customer_source: customerSource,
+        referred_by_employee_id: customerSource === 'referred' ? (referredByEmployeeId || null) : null,
+        referral_notes: customerSource === 'referred' ? referralNotes.trim() : '',
         notes: `POS checkout | payment=${paymentMethod} | discount=${discount.toFixed(2)} | customer=${customerName.trim() || 'walk-in'} | phone=${customerPhone.trim() || '-'}`,
         items: cart.map((item) => ({
           product: item.productId,
@@ -310,6 +367,11 @@ const POS: React.FC<POSProps> = ({ user }) => {
       setJobNo('');
       setIcNumber('');
       setSalespersonName('');
+      setAttendedByEmployeeId('');
+      setCustomerSource('walk_in');
+      setReferredByEmployeeId('');
+      setReferralNotes('');
+      setJobLookup(null);
       setExchangeModel('');
       setGift('');
       setCashAmount('0.00');
@@ -468,14 +530,66 @@ const POS: React.FC<POSProps> = ({ user }) => {
                 <input type="text" placeholder="IC Number" value={icNumber} onChange={(e) => setIcNumber(e.target.value)} className="input-field" />
               </div>
               <div>
-                <label style={labelStyle}>Salesman Name</label>
-                <input type="text" placeholder="Salesman Name" value={salespersonName} onChange={(e) => setSalespersonName(e.target.value)} className="input-field" />
+                <label style={labelStyle}>Attended By</label>
+                <select
+                  value={attendedByEmployeeId}
+                  onChange={(e) => {
+                    setAttendedByEmployeeId(e.target.value);
+                    setSalespersonName(activeSalesmen.find((employee) => employee.id === e.target.value)?.name || '');
+                  }}
+                  className="input-field"
+                >
+                  <option value="">Select salesman</option>
+                  {activeSalesmen.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
+                </select>
               </div>
               <div>
                 <label style={labelStyle}>Gift</label>
                 <input type="text" placeholder="Gift" value={gift} onChange={(e) => setGift(e.target.value)} className="input-field" />
               </div>
             </div>
+            <div className="pos-inline-grid">
+              <div>
+                <label style={labelStyle}>Customer Source</label>
+                <select value={customerSource} onChange={(e) => setCustomerSource(e.target.value as 'walk_in' | 'referred')} className="input-field">
+                  <option value="walk_in">Walk-in Customer</option>
+                  <option value="referred">Referred Customer</option>
+                </select>
+              </div>
+              {customerSource === 'referred' && (
+                <div>
+                  <label style={labelStyle}>Referring Salesman</label>
+                  <select value={referredByEmployeeId} onChange={(e) => setReferredByEmployeeId(e.target.value)} className="input-field">
+                    <option value="">Select referring salesman</option>
+                    {activeSalesmen.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+            {customerSource === 'referred' && (
+              <div>
+                <label style={labelStyle}>Referral Notes</label>
+                <input type="text" placeholder="Referral notes" value={referralNotes} onChange={(e) => setReferralNotes(e.target.value)} className="input-field" />
+              </div>
+            )}
+            {(jobLookupLoading || jobLookup) && (
+              <div className="job-lookup-card">
+                <div className="job-lookup-header">
+                  <strong>Job Intelligence</strong>
+                  <span>{jobLookupLoading ? 'Searching...' : 'Live lookup'}</span>
+                </div>
+                {!jobLookupLoading && jobLookup && (
+                  <div className="job-lookup-grid">
+                    <div><label>Product</label><p>{jobLookup.product?.name || '-'}</p></div>
+                    <div><label>Customer</label><p>{jobLookup.customer?.name || '-'}</p></div>
+                    <div><label>Bill Status</label><p>{jobLookup.sale?.payment_status || '-'}</p></div>
+                    <div><label>Repair</label><p>{jobLookup.repair?.status || '-'}</p></div>
+                    <div><label>Buyback</label><p>{jobLookup.buyback?.status || '-'}</p></div>
+                    <div><label>Inventory Hits</label><p>{jobLookup.inventory.length}</p></div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="cart-items">

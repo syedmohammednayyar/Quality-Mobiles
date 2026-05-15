@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { HttpError } from "../../utils/httpError.js";
-import { assertStoreAccess } from "../../utils/storeAccess.js";
+import { assertStoreAccess, isAdmin } from "../../utils/storeAccess.js";
 import {
   createProduct,
   deleteProduct,
@@ -35,8 +35,14 @@ const productPayloadSchema = z.object({
   selling_price: z.coerce.number().min(0).optional(),
   discount: z.coerce.number().min(0).optional(),
   tax: z.coerce.number().min(0).max(100).optional(),
+  inventory_mode: z.enum(["serialized", "bulk"]).optional(),
   stock_quantity: z.coerce.number().int().min(0).default(0),
   min_stock_level: z.coerce.number().int().min(0).default(0),
+  serialized_entries: z.array(z.object({
+    imei: z.string().max(40).optional(),
+    serial_number: z.string().max(80).optional(),
+    barcode: z.string().max(120).optional(),
+  })).optional(),
   primary_store_ref: objectIdSchema.nullable().optional(),
   supplier_name: z.string().max(150).optional(),
   supplier_contact: z.string().max(150).optional(),
@@ -89,8 +95,10 @@ function toServicePayload(payload, userId) {
     price: payload.selling_price ?? payload.price,
     discount: payload.discount,
     tax: payload.tax,
+    inventoryMode: payload.inventory_mode,
     stockQuantity: payload.stock_quantity,
     minStockLevel: payload.min_stock_level,
+    serializedEntries: payload.serialized_entries,
     primaryStoreRef: payload.primary_store_ref,
     supplierName: payload.supplier_name,
     supplierContact: payload.supplier_contact,
@@ -106,8 +114,9 @@ export async function listProductsHandler(req, res, next) {
   try {
     if (!req.auth) throw new HttpError(401, "Authentication required", "AUTH_REQUIRED");
     const query = listProductsQuerySchema.parse(req.query);
-    if (query.store_id) assertStoreAccess(req.auth, query.store_id);
-    const rows = await listProducts({ storeId: query.store_id });
+    const storeId = query.store_id || (isAdmin(req.auth) ? undefined : req.auth.store_id);
+    if (storeId) assertStoreAccess(req.auth, storeId);
+    const rows = await listProducts({ storeId });
     res.status(200).json({ rows });
   } catch (error) {
     if (handleZod(error, next)) return;

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Repair } from "../../db/models.js";
 import { HttpError } from "../../utils/httpError.js";
 import { assertStoreAccess, isAdmin } from "../../utils/storeAccess.js";
 import {
@@ -114,8 +115,14 @@ export async function createRepairHandler(req, res, next) {
 
 export async function updateRepairHandler(req, res, next) {
   try {
+    if (!req.auth) {
+      throw new HttpError(401, "Authentication required", "AUTH_REQUIRED");
+    }
     const params = repairIdParamsSchema.parse(req.params);
     const payload = updateRepairSchema.parse(req.body);
+    const existing = await Repair.findById(params.repairId).select("store").lean();
+    if (!existing) throw new HttpError(404, "Repair not found", "REPAIR_NOT_FOUND");
+    if (existing.store) assertStoreAccess(req.auth, existing.store);
     if (payload.store_ref) assertStoreAccess(req.auth, payload.store_ref);
 
     const row = await updateRepair(params.repairId, {
@@ -158,7 +165,13 @@ export async function updateRepairHandler(req, res, next) {
 
 export async function deleteRepairHandler(req, res, next) {
   try {
+    if (!req.auth) {
+      throw new HttpError(401, "Authentication required", "AUTH_REQUIRED");
+    }
     const params = repairIdParamsSchema.parse(req.params);
+    const existing = await Repair.findById(params.repairId).select("store").lean();
+    if (!existing) throw new HttpError(404, "Repair not found", "REPAIR_NOT_FOUND");
+    if (existing.store) assertStoreAccess(req.auth, existing.store);
     await deleteRepair(params.repairId);
     res.status(204).send();
   } catch (error) {

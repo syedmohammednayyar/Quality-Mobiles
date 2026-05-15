@@ -19,7 +19,7 @@ productsRouter.get(
 );
 productsRouter.post(
   "/",
-  authorize("admin"),
+  authorize("admin", "manager"),
   createProductHandler,
 );
 productsRouter.patch(

@@ -6,6 +6,7 @@ import {
   deleteSaleHandler,
   getSaleByIdHandler,
   listSalesHandler,
+  lookupSaleJobHandler,
   updateSaleHandler,
 } from "./sales.controller.js";
 
@@ -23,6 +24,12 @@ salesRouter.post(
   "/",
   authorize("admin", "manager", "cashier"),
   createSaleHandler,
+);
+
+salesRouter.get(
+  "/job-lookup/:jobNumber",
+  authorize("admin", "manager", "cashier", "inventory_manager"),
+  lookupSaleJobHandler,
 );
 
 salesRouter.get(

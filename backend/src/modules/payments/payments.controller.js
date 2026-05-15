@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PaymentEntry } from "../../db/models.js";
 import { HttpError } from "../../utils/httpError.js";
 import { assertStoreAccess, isAdmin } from "../../utils/storeAccess.js";
 import {
@@ -96,6 +97,9 @@ export async function updatePaymentEntryHandler(req, res, next) {
   try {
     const params = paymentEntryIdParamsSchema.parse(req.params);
     const payload = updatePaymentEntrySchema.parse(req.body);
+    const existing = await PaymentEntry.findById(params.paymentEntryId).select("store").lean();
+    if (!existing) throw new HttpError(404, "Payment entry not found", "PAYMENT_NOT_FOUND");
+    if (existing.store) assertStoreAccess(req.auth, existing.store);
     if (payload.store_ref) assertStoreAccess(req.auth, payload.store_ref);
 
     const row = await updatePaymentEntry(params.paymentEntryId, {
@@ -131,6 +135,9 @@ export async function updatePaymentEntryHandler(req, res, next) {
 export async function deletePaymentEntryHandler(req, res, next) {
   try {
     const params = paymentEntryIdParamsSchema.parse(req.params);
+    const existing = await PaymentEntry.findById(params.paymentEntryId).select("store").lean();
+    if (!existing) throw new HttpError(404, "Payment entry not found", "PAYMENT_NOT_FOUND");
+    if (existing.store) assertStoreAccess(req.auth, existing.store);
     await deletePaymentEntry(params.paymentEntryId);
     res.status(204).send();
   } catch (error) {

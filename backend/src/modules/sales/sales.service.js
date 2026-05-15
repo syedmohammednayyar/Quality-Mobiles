@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { Sale, Product, Store, Customer, Employee, StoreInventory, StockLedger, User, Role } from "../../db/models.js";
+import { BulkInventory, Buyback, Customer, Employee, Product, Repair, Sale, SerializedInventory, StockLedger, Store, StoreInventory, User } from "../../db/models.js";
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
 
@@ -48,6 +48,15 @@ async function requireCustomer(customerId) {
   if (!customer) {
     throw new HttpError(404, "Customer not found", "CUSTOMER_NOT_FOUND");
   }
+}
+
+async function requireEmployee(employeeId, storeId) {
+  if (!employeeId) return null;
+  const employee = await Employee.findOne({ _id: employeeId, store: storeId, isActive: true });
+  if (!employee) {
+    throw new HttpError(404, "Selected employee was not found in this store", "SALE_EMPLOYEE_NOT_FOUND");
+  }
+  return employee;
 }
 
 async function requireEmployeeForUser(userId, storeId) {
@@ -107,34 +116,32 @@ export async function createSale(input) {
       productMap.set(p._id.toString(), p);
     });
 
-    const stockManagedProductIds = products
-      .filter((p) => p.category !== "service")
-      .map((p) => p._id.toString());
-
+    const stockManagedProductIds = products.filter((p) => p.category !== "service").map((p) => p._id.toString());
     const inventoryByProductId = new Map();
-    if (stockManagedProductIds.length > 0) {
+    const serializedCounts = await SerializedInventory.aggregate([
+      { $match: { store: new mongoose.Types.ObjectId(input.storeId), status: "in_stock", product: { $in: products.filter((p) => p.inventoryMode === "serialized").map((p) => p._id) } } },
+      { $group: { _id: "$product", quantity: { $sum: 1 } } },
+    ]).session(session);
+    serializedCounts.forEach((row) => inventoryByProductId.set(String(row._id), Number(row.quantity || 0)));
+
+    const bulkStocks = await BulkInventory.find({
+      store: input.storeId,
+      product: { $in: products.filter((p) => p.inventoryMode !== "serialized").map((p) => p._id) },
+    }).session(session);
+    bulkStocks.forEach((row) => inventoryByProductId.set(String(row.product), Number(row.quantity || 0)));
+
+    if (inventoryByProductId.size === 0 && stockManagedProductIds.length > 0) {
       const inventories = await StoreInventory.find({
         store: input.storeId,
         "items.product": { $in: stockManagedProductIds }
       }).session(session);
-
-      inventories.forEach(inv => {
-        inv.items.forEach(item => {
+      inventories.forEach((inv) => {
+        inv.items.forEach((item) => {
           if (stockManagedProductIds.includes(item.product.toString())) {
             inventoryByProductId.set(item.product.toString(), item.quantity);
           }
         });
       });
-
-      for (const pid of stockManagedProductIds) {
-        if (!inventoryByProductId.has(pid)) {
-          throw new HttpError(
-            400,
-            `Product ${pid} is missing in store inventory`,
-            "SALE_MISSING_STORE_INVENTORY",
-          );
-        }
-      }
     }
 
     const discountCents = toCents(input.discountTotal || 0);
@@ -223,6 +230,9 @@ export async function createSale(input) {
 
     const paymentStatus = paidCents <= 0 ? "pending" : paidCents < grandTotalCents ? "partial" : "paid";
 
+    await requireEmployee(input.attendedBy, input.storeId);
+    await requireEmployee(input.referredByEmployee, input.storeId);
+
     const [sale] = await Sale.create([{
       saleNo: "SALE-PENDING",
       store: input.storeId,
@@ -245,6 +255,10 @@ export async function createSale(input) {
       gotAmount: Number(centsToMoney(toCents(input.gotAmount || 0))),
       gift: input.gift || null,
       salespersonName: input.salespersonName || null,
+      attendedBy: input.attendedBy || null,
+      customerSource: input.customerSource || "walk_in",
+      referredByEmployee: input.referredByEmployee || null,
+      referralNotes: input.referralNotes || null,
       items: computedItems,
       payments: input.payments.map(p => ({
         paymentMethod: p.paymentMethod,
@@ -262,29 +276,53 @@ export async function createSale(input) {
 
     for (const item of computedItems) {
       if (item.category !== "service") {
-        const updatedInv = await StoreInventory.findOneAndUpdate(
-          { 
-            store: new mongoose.Types.ObjectId(input.storeId), 
-            items: { 
-              $elemMatch: { 
-                product: new mongoose.Types.ObjectId(item.product), 
-                quantity: { $gte: item.quantity } 
-              } 
-            } 
-          },
-          { 
-            $inc: { "items.$.quantity": -item.quantity },
-            $set: { updatedAt: new Date() }
-          },
-          { session, returnDocument: "after" }
-        );
-
-        if (!updatedInv) {
-          throw new HttpError(
-            409,
-            "Concurrent stock update conflict or insufficient stock detected",
-            "SALE_STOCK_CONFLICT",
+        const soldProduct = productMap.get(String(item.product));
+        if (soldProduct?.inventoryMode === "serialized") {
+          const serialRows = await SerializedInventory.find({
+            store: input.storeId,
+            product: item.product,
+            status: "in_stock",
+          }).sort({ createdAt: 1 }).limit(item.quantity).session(session);
+          if (serialRows.length !== item.quantity) {
+            throw new HttpError(409, "Concurrent serialized stock conflict detected", "SALE_STOCK_CONFLICT");
+          }
+          await SerializedInventory.updateMany(
+            { _id: { $in: serialRows.map((row) => row._id) } },
+            { $set: { status: "sold", updatedAt: new Date() } },
+            { session },
           );
+        } else {
+          const updatedBulk = await BulkInventory.findOneAndUpdate(
+            { store: input.storeId, product: item.product, quantity: { $gte: item.quantity } },
+            { $inc: { quantity: -item.quantity }, $set: { updatedAt: new Date() } },
+            { session, new: true },
+          );
+          if (!updatedBulk) {
+            const updatedInv = await StoreInventory.findOneAndUpdate(
+              {
+                store: new mongoose.Types.ObjectId(input.storeId),
+                items: {
+                  $elemMatch: {
+                    product: new mongoose.Types.ObjectId(item.product),
+                    quantity: { $gte: item.quantity }
+                  }
+                }
+              },
+              {
+                $inc: { "items.$.quantity": -item.quantity },
+                $set: { updatedAt: new Date() }
+              },
+              { session, returnDocument: "after" }
+            );
+
+            if (!updatedInv) {
+              throw new HttpError(
+                409,
+                "Concurrent stock update conflict or insufficient stock detected",
+                "SALE_STOCK_CONFLICT",
+              );
+            }
+          }
         }
 
         await StockLedger.create([{
@@ -470,4 +508,151 @@ export async function deleteSale(saleId, userId) {
 
     await Sale.deleteOne({ _id: saleId }).session(session);
   });
+}
+
+export async function lookupSaleJob(jobNumber, auth) {
+  const scopedStore = auth?.roles?.includes("admin") ? null : new mongoose.Types.ObjectId(auth.store_id);
+  const scopedStoreQuery = scopedStore ? { store: scopedStore } : {};
+  const sale = await Sale.findOne({ $or: [{ jobNumber }, { saleNo: jobNumber }] })
+    .populate("customer")
+    .populate("attendedBy")
+    .populate("referredByEmployee")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const product = await Product.findOne({
+    $or: [{ jobId: jobNumber }, { jobNumber }, { barcode: jobNumber }, { imei: jobNumber }, { serialNumber: jobNumber }],
+    isActive: true,
+  }).lean();
+
+  const inventoryStoreFilter = scopedStore ? { store: scopedStore } : {};
+  const serializedInventory = product ? await SerializedInventory.find({
+    ...inventoryStoreFilter,
+    product: product._id,
+  }).sort({ createdAt: -1 }).limit(25).lean() : [];
+
+  const bulkInventory = product ? await BulkInventory.find({
+    ...inventoryStoreFilter,
+    product: product._id,
+  }).lean() : [];
+
+  const visibleSale = sale && (!scopedStore || String(sale.store) === String(scopedStore)) ? sale : null;
+  const buyback = await Buyback.findOne({ ...scopedStoreQuery, $or: [{ jobNo: jobNumber }, { imei: jobNumber }] }).sort({ createdAt: -1 }).lean();
+  const repair = await Repair.findOne({ ...scopedStoreQuery, $or: [{ jobNumber }, { serviceJobId: jobNumber }, { ticketNo: jobNumber }] }).sort({ createdAt: -1 }).lean();
+  const visibleProduct = product && (!scopedStore || visibleSale || serializedInventory.length > 0 || bulkInventory.length > 0)
+    ? product
+    : null;
+
+  return {
+    sale: visibleSale ? {
+      id: visibleSale._id.toString(),
+      customer: visibleSale.customer ? visibleSale.customer._id?.toString?.() || String(visibleSale.customer) : null,
+      store_ref: visibleSale.store?.toString?.() || String(visibleSale.store),
+      job_no: visibleSale.jobNumber || visibleSale.saleNo,
+      ic_number: visibleSale.icNumber || "",
+      cash_amount: Number(visibleSale.cashAmount || 0).toFixed(2),
+      online_amount: Number(visibleSale.onlineAmount || 0).toFixed(2),
+      exchange_amount: Number(visibleSale.exchangeTotal || 0).toFixed(2),
+      exchange_model: visibleSale.exchangeModel || "",
+      got_amount: Number(visibleSale.gotAmount || visibleSale.amountPaid || 0).toFixed(2),
+      gift: visibleSale.gift || "",
+      salesperson_name: visibleSale.salespersonName || "",
+      attended_by_employee_id: visibleSale.attendedBy?._id?.toString?.() || null,
+      customer_source: visibleSale.customerSource || "walk_in",
+      referred_by_employee_id: visibleSale.referredByEmployee?._id?.toString?.() || null,
+      referral_notes: visibleSale.referralNotes || "",
+      sold_at: visibleSale.createdAt,
+      notes: visibleSale.note || "",
+      items: (visibleSale.items || []).map((item) => ({
+        product: String(item.product),
+        quantity: item.quantity,
+        unit_price: Number(item.unitPrice || 0).toFixed(2),
+      })),
+      total_amount: Number(visibleSale.grandTotal || 0).toFixed(2),
+      payment_status: visibleSale.paymentStatus,
+    } : null,
+    product: visibleProduct ? {
+      id: visibleProduct._id.toString(),
+      job_id: visibleProduct.jobId || visibleProduct.jobNumber || "",
+      product_code: visibleProduct.productCode || "",
+      sku: visibleProduct.sku,
+      barcode: visibleProduct.barcode || "",
+      imei: visibleProduct.imei || "",
+      serial_number: visibleProduct.serialNumber || "",
+      name: visibleProduct.name,
+      brand: visibleProduct.brand || "",
+      model: visibleProduct.model || "",
+      category: visibleProduct.category,
+      description: visibleProduct.deviceNotes || "",
+      price: Number(visibleProduct.unitPrice || 0).toFixed(2),
+      stock_quantity: visibleProduct.inventoryMode === "serialized" ? serializedInventory.filter((entry) => entry.status === "in_stock").length : bulkInventory.reduce((sum, row) => sum + Number(row.quantity || 0), 0),
+      inventory_mode: visibleProduct.inventoryMode || "bulk",
+      active: Boolean(visibleProduct.isActive),
+    } : null,
+    customer: visibleSale?.customer ? {
+      id: visibleSale.customer._id.toString(),
+      name: visibleSale.customer.fullName,
+      email: visibleSale.customer.email || "",
+      phone: visibleSale.customer.phone || "",
+      store_ref: visibleSale.customer.store ? String(visibleSale.customer.store) : null,
+      created_at: visibleSale.customer.createdAt,
+    } : null,
+    payments: (visibleSale?.payments || []).map((payment) => ({
+      method: payment.paymentMethod,
+      amount: Number(payment.amount || 0).toFixed(2),
+      status: payment.status,
+      reference_no: payment.referenceNo || null,
+    })),
+    inventory: serializedInventory.map((entry) => ({
+      store_id: String(entry.store),
+      product_id: String(entry.product),
+      sku: product?.sku || "",
+      barcode: entry.barcode || product?.barcode || "",
+      imei: entry.imei || "",
+      serial_number: entry.serialNumber || "",
+      name: product?.name || "",
+      brand: product?.brand || "",
+      model: product?.model || "",
+      category: product?.category || "",
+      quantity: 1,
+      reserved_quantity: 0,
+      min_stock_level: 0,
+      unit_price: Number(product?.unitPrice || 0).toFixed(2),
+      updated_at: entry.updatedAt,
+      inventory_mode: "serialized",
+    })).concat(bulkInventory.map((entry) => ({
+      store_id: String(entry.store),
+      product_id: String(entry.product),
+      sku: product?.sku || "",
+      barcode: product?.barcode || "",
+      imei: product?.imei || "",
+      serial_number: product?.serialNumber || "",
+      name: product?.name || "",
+      brand: product?.brand || "",
+      model: product?.model || "",
+      category: product?.category || "",
+      quantity: Number(entry.quantity || 0),
+      reserved_quantity: Number(entry.reservedQuantity || 0),
+      min_stock_level: Number(entry.minStockLevel || 0),
+      unit_price: Number(product?.unitPrice || 0).toFixed(2),
+      updated_at: entry.updatedAt,
+      inventory_mode: "bulk",
+    }))),
+    buyback,
+    repair: repair ? {
+      id: repair._id.toString(),
+      ticket_no: repair.ticketNo,
+      customer_name: repair.customerName,
+      customer: repair.customer ? String(repair.customer) : null,
+      store_ref: repair.store ? String(repair.store) : null,
+      device_model: repair.deviceModel,
+      problem: repair.problem || "",
+      technician_name: repair.technicianName || "",
+      status: repair.status,
+      parts: repair.parts || [],
+      labor_cost: Number(repair.laborCost || 0).toFixed(2),
+      notes: repair.notes || "",
+      created_at: repair.createdAt,
+    } : null,
+  };
 }

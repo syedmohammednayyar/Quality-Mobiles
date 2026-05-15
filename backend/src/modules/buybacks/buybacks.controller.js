@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Buyback } from "../../db/models.js";
 import { HttpError } from "../../utils/httpError.js";
 import { assertStoreAccess, isAdmin } from "../../utils/storeAccess.js";
 import {
@@ -126,6 +127,9 @@ export async function updateBuybackHandler(req, res, next) {
 
     const params = buybackIdParamsSchema.parse(req.params);
     const payload = updateBuybackSchema.parse(req.body);
+    const existing = await Buyback.findById(params.buybackId).select("store").lean();
+    if (!existing) throw new HttpError(404, "Buyback not found", "BUYBACK_NOT_FOUND");
+    if (existing.store) assertStoreAccess(req.auth, existing.store);
     if (payload.store_ref) assertStoreAccess(req.auth, payload.store_ref);
 
     const row = await updateBuyback(
@@ -169,7 +173,13 @@ export async function updateBuybackHandler(req, res, next) {
 
 export async function deleteBuybackHandler(req, res, next) {
   try {
+    if (!req.auth) {
+      throw new HttpError(401, "Authentication required", "AUTH_REQUIRED");
+    }
     const params = buybackIdParamsSchema.parse(req.params);
+    const existing = await Buyback.findById(params.buybackId).select("store").lean();
+    if (!existing) throw new HttpError(404, "Buyback not found", "BUYBACK_NOT_FOUND");
+    if (existing.store) assertStoreAccess(req.auth, existing.store);
     await deleteBuyback(params.buybackId);
     res.status(204).send();
   } catch (error) {

@@ -11,7 +11,7 @@ import {
   type ApiSale,
   type ApiStore,
 } from '../services/api';
-import { User, isPrivilegedUser } from '../types';
+import { User } from '../types';
 import './Customers.css';
 
 type CustomerWithStats = ApiCustomer & {
@@ -25,6 +25,7 @@ interface CustomersProps {
 }
 
 const Customers: React.FC<CustomersProps> = ({ user }) => {
+  const canManageCustomers = user.role === 'Admin' || user.role === 'Manager';
   const [searchParams] = useSearchParams();
   const [searchTerm, setSearchTerm] = useState('');
   const [customers, setCustomers] = useState<ApiCustomer[]>([]);
@@ -76,8 +77,8 @@ const Customers: React.FC<CustomersProps> = ({ user }) => {
   }, [searchParams]);
 
   const storeNameById = useMemo(() => {
-    const map = new Map<number, string>();
-    stores.forEach((store) => map.set(store.id, store.name));
+    const map = new Map<string, string>();
+    stores.forEach((store) => map.set(String(store.id), store.name));
     return map;
   }, [stores]);
 
@@ -85,10 +86,15 @@ const Customers: React.FC<CustomersProps> = ({ user }) => {
     return customers.map((customer) => {
       const customerSales = sales.filter((sale) => sale.customer === customer.id);
       const totalSpent = customerSales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
-      const lastVisit = customerSales.length > 0 ? customerSales[0].sold_at.slice(0, 10) : customer.created_at.slice(0, 10);
+      const saleDate = customerSales.length > 0 ? (customerSales[0].sold_at || '') : '';
+      const createdDate = customer.created_at || '';
+      const lastVisit = (saleDate || createdDate || new Date().toISOString()).slice(0, 10);
 
       return {
         ...customer,
+        name: customer.name || '',
+        phone: customer.phone || '',
+        email: customer.email || '',
         totalSpent,
         purchases: customerSales.length,
         lastVisit,
@@ -97,9 +103,11 @@ const Customers: React.FC<CustomersProps> = ({ user }) => {
   }, [customers, sales]);
 
   const filteredCustomers = customerStats.filter((customer) => {
-    const storeName = customer.store_ref ? storeNameById.get(customer.store_ref) || '' : '';
-    return customer.name.toLowerCase().includes(searchTerm.toLowerCase())
-      || customer.phone.includes(searchTerm)
+    const storeName = customer.store_ref ? storeNameById.get(String(customer.store_ref)) || '' : '';
+    const safeName = String(customer.name || '');
+    const safePhone = String(customer.phone || '');
+    return safeName.toLowerCase().includes(searchTerm.toLowerCase())
+      || safePhone.includes(searchTerm)
       || String(customer.id).includes(searchTerm)
       || storeName.toLowerCase().includes(searchTerm.toLowerCase());
   });
@@ -197,7 +205,7 @@ const Customers: React.FC<CustomersProps> = ({ user }) => {
         </div>
       </div>
 
-      {!isPrivilegedUser(user) && (
+      {canManageCustomers && (
         <form onSubmit={handleAddCustomer} className="card customers-form">
           <h3 className="customers-form-title">Add Customer</h3>
           <div className="customers-form-grid">
@@ -228,7 +236,7 @@ const Customers: React.FC<CustomersProps> = ({ user }) => {
         </form>
       )}
 
-      {!isPrivilegedUser(user) && editingCustomerId !== null && (
+      {canManageCustomers && editingCustomerId !== null && (
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -302,18 +310,19 @@ const Customers: React.FC<CustomersProps> = ({ user }) => {
           <tbody>
             {filteredCustomers.map((customer) => {
               const tier = getTierBadge(customer.totalSpent);
+              const safeName = (customer.name || '').trim() || 'Unnamed Customer';
               return (
                 <tr key={customer.id}>
                   <td className="name-cell">
-                    <div className="avatar">{customer.name.charAt(0)}</div>
+                    <div className="avatar">{safeName.charAt(0)}</div>
                     <div className="name-info">
-                      <strong>{customer.name}</strong>
+                      <strong>{safeName}</strong>
                       <span className="cust-id">CUST{String(customer.id).padStart(4, '0')}</span>
                     </div>
                   </td>
                   <td className="phone-cell">{customer.phone || '-'}</td>
                   <td className="email-cell">{customer.email || '-'}</td>
-                  <td>{customer.store_ref ? storeNameById.get(customer.store_ref) || '-' : '-'}</td>
+                  <td>{customer.store_ref ? storeNameById.get(String(customer.store_ref)) || '-' : '-'}</td>
                   <td>
                     <span className="tier-badge" style={{ borderColor: tier.color }}>
                       {tier.label}
@@ -323,7 +332,7 @@ const Customers: React.FC<CustomersProps> = ({ user }) => {
                   <td className="count-cell"><strong>{customer.purchases}</strong></td>
                   <td className="date-cell">{customer.lastVisit}</td>
                   <td>
-                    {!isPrivilegedUser(user) ? (
+                    {canManageCustomers ? (
                       pendingDeleteCustomerId === customer.id ? (
                         <div className="customer-actions">
                           <button className="btn btn-danger btn-sm" type="button" onClick={() => void handleDeleteCustomer(customer)}>Confirm</button>

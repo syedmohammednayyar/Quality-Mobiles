@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { Product, Sale, SequenceCounter, StockLedger, Store, StoreInventory } from "../../db/models.js";
+import { BulkInventory, Product, Sale, SequenceCounter, SerializedInventory, StockLedger, Store, StoreInventory } from "../../db/models.js";
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
 import { toObjectId } from "../../utils/ids.js";
@@ -29,6 +29,13 @@ function dbCategoryToApi(category) {
   return category;
 }
 
+function resolveInventoryMode(input) {
+  if (input.inventoryMode === "serialized" || input.inventoryMode === "bulk") return input.inventoryMode;
+  const category = apiCategoryToDb(input.category);
+  if (["new_phone", "used_phone"].includes(category)) return "serialized";
+  return "bulk";
+}
+
 async function nextSequence(key, prefix, width = 5) {
   const counter = await SequenceCounter.findOneAndUpdate(
     { key },
@@ -51,20 +58,44 @@ async function mapProduct(doc, storeId = null) {
   let primaryStoreRef = null;
   let minStockLevel = 0;
 
-  const inventoryQuery = storeId
-    ? { store: toObjectId(storeId, "STORE_INVALID_ID"), "items.product": doc._id }
-    : { "items.product": doc._id };
+  if (doc.inventoryMode === "serialized") {
+    const serializedQuery = storeId
+      ? { store: toObjectId(storeId, "STORE_INVALID_ID"), product: doc._id, status: "in_stock" }
+      : { product: doc._id, status: "in_stock" };
+    stockQuantity = await SerializedInventory.countDocuments(serializedQuery);
 
-  const inventories = await StoreInventory.find(inventoryQuery);
-
-  inventories.forEach((inv) => {
-    const item = inv.items.find((i) => i.product.toString() === doc._id.toString());
-    if (item) {
-      stockQuantity += item.quantity;
-      minStockLevel = item.minStockLevel || minStockLevel;
-      if (!primaryStoreRef) primaryStoreRef = inv.store.toString();
+    if (storeId) {
+      primaryStoreRef = storeId;
+    } else {
+      const firstEntry = await SerializedInventory.findOne({ product: doc._id, status: "in_stock" }).sort({ createdAt: 1 }).select("store").lean();
+      primaryStoreRef = firstEntry?.store ? firstEntry.store.toString() : null;
     }
-  });
+  } else {
+    const bulkQuery = storeId
+      ? { store: toObjectId(storeId, "STORE_INVALID_ID"), product: doc._id }
+      : { product: doc._id };
+    const bulkRows = await BulkInventory.find(bulkQuery).lean();
+    bulkRows.forEach((row) => {
+      stockQuantity += Number(row.quantity || 0);
+      minStockLevel = Number(row.minStockLevel || 0) || minStockLevel;
+      if (!primaryStoreRef) primaryStoreRef = row.store.toString();
+    });
+  }
+
+  if (stockQuantity === 0 && doc.inventoryMode !== "serialized") {
+    const inventoryQuery = storeId
+      ? { store: toObjectId(storeId, "STORE_INVALID_ID"), "items.product": doc._id }
+      : { "items.product": doc._id };
+    const inventories = await StoreInventory.find(inventoryQuery);
+    inventories.forEach((inv) => {
+      const item = inv.items.find((i) => i.product.toString() === doc._id.toString());
+      if (item) {
+        stockQuantity += item.quantity;
+        minStockLevel = item.minStockLevel || minStockLevel;
+        if (!primaryStoreRef) primaryStoreRef = inv.store.toString();
+      }
+    });
+  }
 
   return {
     id: doc._id.toString(),
@@ -99,6 +130,7 @@ async function mapProduct(doc, storeId = null) {
     images: doc.images || [],
     remarks: doc.remarks || "",
     device_notes: doc.deviceNotes || "",
+    inventory_mode: doc.inventoryMode || "bulk",
     active: Boolean(doc.isActive),
   };
 }
@@ -155,6 +187,50 @@ async function upsertStoreInventory(session, storeId, productId, quantity, minSt
   await inventory.save({ session });
 }
 
+async function upsertBulkInventory(session, storeId, productId, quantity, minStockLevel = 0, userId = null) {
+  await BulkInventory.findOneAndUpdate(
+    { store: storeId, product: productId },
+    {
+      $set: {
+        quantity,
+        minStockLevel: Math.max(0, Number(minStockLevel || 0)),
+        addedBy: userId || undefined,
+      },
+    },
+    { upsert: true, session, new: true },
+  );
+}
+
+async function createSerializedEntries(session, product, storeId, entries, userId) {
+  for (const entry of entries) {
+    const imei = cleanText(entry.imei);
+    const serialNumber = cleanText(entry.serial_number || entry.serialNumber);
+    const barcode = cleanText(entry.barcode);
+    if (!imei && !serialNumber && !barcode) {
+      throw new HttpError(400, "Serialized entries require IMEI, serial number, or barcode", "PRODUCT_SERIALIZED_ENTRY_REQUIRED");
+    }
+    if (imei) {
+      const imeiExists = await SerializedInventory.exists({ imei });
+      if (imeiExists) throw new HttpError(409, "Duplicate IMEI detected", "PRODUCT_DUPLICATE_IMEI");
+    }
+    if (barcode) {
+      const barcodeExists = await SerializedInventory.exists({ barcode });
+      if (barcodeExists) throw new HttpError(409, "Duplicate barcode detected", "PRODUCT_DUPLICATE_BARCODE");
+    }
+    await SerializedInventory.create([{
+      serialId: await nextSequence("serialized_inventory", "SER-", 6),
+      product: product._id,
+      imei,
+      serialNumber,
+      barcode,
+      jobNumber: product.jobId || product.jobNumber || undefined,
+      store: storeId,
+      status: "in_stock",
+      addedBy: userId,
+    }], { session });
+  }
+}
+
 export async function listProducts(input = {}) {
   if (input.storeId) {
     const inventory = await StoreInventory.findOne({ store: toObjectId(input.storeId, "STORE_INVALID_ID") });
@@ -181,14 +257,19 @@ export async function createProduct(input) {
   const name = String(input.name || "").trim();
   const stockQuantity = Number(input.stockQuantity || 0);
   const primaryStoreRef = input.primaryStoreRef || null;
+  const inventoryMode = resolveInventoryMode(input);
+  const serializedEntries = Array.isArray(input.serializedEntries) ? input.serializedEntries : [];
 
   if (!sku) throw new HttpError(400, "SKU is required", "PRODUCT_REQUIRED_SKU");
   if (!name) throw new HttpError(400, "Product name is required", "PRODUCT_REQUIRED_NAME");
   if (Number(input.price) < 0 || Number(input.purchasePrice || 0) < 0) {
     throw new HttpError(400, "Price must be non-negative", "PRODUCT_INVALID_PRICE");
   }
-  if (stockQuantity > 0 && !primaryStoreRef) {
+  if ((stockQuantity > 0 || serializedEntries.length > 0) && !primaryStoreRef) {
     throw new HttpError(400, "Primary store is required when stock quantity is greater than zero", "PRODUCT_STORE_REQUIRED_FOR_STOCK");
+  }
+  if (inventoryMode === "serialized" && serializedEntries.length === 0 && stockQuantity > 0) {
+    throw new HttpError(400, "Serialized products require unique device entries instead of manual quantity", "PRODUCT_SERIALIZED_ENTRIES_REQUIRED");
   }
 
   return withTransaction(async (session) => {
@@ -229,24 +310,39 @@ export async function createProduct(input) {
       images: Array.isArray(input.images) ? input.images.filter(Boolean) : [],
       remarks: cleanText(input.remarks),
       deviceNotes: cleanText(input.deviceNotes || input.description),
+      inventoryMode,
       isActive: input.active ?? true,
     }], { session });
 
     if (primaryStoreRef) {
-      await upsertStoreInventory(
-        session,
-        toObjectId(primaryStoreRef, "STORE_INVALID_ID"),
-        product._id,
-        stockQuantity,
-        Number(input.minStockLevel || 0),
-      );
+      const storeObjectId = toObjectId(primaryStoreRef, "STORE_INVALID_ID");
+      if (inventoryMode === "serialized") {
+        await createSerializedEntries(session, product, storeObjectId, serializedEntries, input.userId);
+      } else {
+        await upsertBulkInventory(
+          session,
+          storeObjectId,
+          product._id,
+          stockQuantity,
+          Number(input.minStockLevel || 0),
+          input.userId,
+        );
+        await upsertStoreInventory(
+          session,
+          storeObjectId,
+          product._id,
+          stockQuantity,
+          Number(input.minStockLevel || 0),
+        );
+      }
 
-      if (stockQuantity > 0) {
+      const openingQuantity = inventoryMode === "serialized" ? serializedEntries.length : stockQuantity;
+      if (openingQuantity > 0) {
         await StockLedger.create([{
-          store: toObjectId(primaryStoreRef, "STORE_INVALID_ID"),
+          store: storeObjectId,
           product: product._id,
           movementType: "in",
-          quantity: stockQuantity,
+          quantity: openingQuantity,
           referenceType: "product_create",
           referenceId: product._id,
           note: "Initial stock",
@@ -300,6 +396,7 @@ export async function updateProduct(productId, input) {
     if (input.remarks !== undefined) product.remarks = cleanText(input.remarks);
     if (input.deviceNotes !== undefined || input.description !== undefined) product.deviceNotes = cleanText(input.deviceNotes || input.description);
     if (input.active !== undefined) product.isActive = input.active;
+    if (input.inventoryMode !== undefined) product.inventoryMode = input.inventoryMode;
 
     await product.save({ session });
 

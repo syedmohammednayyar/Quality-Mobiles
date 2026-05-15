@@ -2,6 +2,13 @@ import { Store } from "../../db/models.js";
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
 
+const FIXED_STORES = [
+  { code: "STORE1", name: "Store 1" },
+  { code: "STORE2", name: "Store 2" },
+  { code: "STORE3", name: "Store 3" },
+  { code: "STORE4", name: "Store 4" },
+];
+
 function mapStore(doc) {
   return {
     id: doc._id.toString(),
@@ -40,48 +47,16 @@ export async function listStores(filterStoreId) {
 }
 
 export async function createStore(input) {
-  return withTransaction(async (session) => {
-    const name = input.name.trim();
-    const code = input.code.trim().toUpperCase();
-
-    if (!name || !code) {
-      throw new HttpError(
-        400,
-        "Store name and code are required",
-        "STORE_REQUIRED_FIELDS",
-      );
-    }
-
-    const parentId = input.storeType === "main" ? null : input.parent;
-    if (parentId) {
-      await requireParentStore(parentId);
-    }
-
-    try {
-      const [store] = await Store.create([{
-        name,
-        code,
-        parentStore: parentId,
-        isActive: input.isActive ?? true,
-      }], { session });
-
-      return mapStore(store);
-    } catch (error) {
-      if (error.code === 11000) {
-        throw new HttpError(
-          409,
-          "Store name or code already exists",
-          "STORE_DUPLICATE",
-        );
-      }
-      throw error;
-    }
-  });
+  throw new HttpError(403, "Store creation is disabled. System supports only 4 fixed stores.", "STORE_FIXED_SET");
 }
 
 export async function updateStore(storeId, input) {
   return withTransaction(async (session) => {
     const store = await requireStore(storeId);
+    if (!FIXED_STORES.some((s) => s.code === store.code)) {
+      throw new HttpError(400, "Only fixed store set is supported", "STORE_INVALID_SET");
+    }
+    const isAdmin = Array.isArray(input.actorRoles) && input.actorRoles.includes("admin");
 
     if (input.name !== undefined) {
       const name = input.name.trim();
@@ -96,6 +71,9 @@ export async function updateStore(storeId, input) {
     }
 
     if (input.code !== undefined) {
+      if (!isAdmin) {
+        throw new HttpError(403, "Managers can update store display settings only", "STORE_MANAGER_RESTRICTED");
+      }
       const code = input.code.trim().toUpperCase();
       if (!code) {
         throw new HttpError(
@@ -108,6 +86,9 @@ export async function updateStore(storeId, input) {
     }
 
     if (input.storeType !== undefined || input.parent !== undefined) {
+      if (!isAdmin) {
+        throw new HttpError(403, "Managers can update store display settings only", "STORE_MANAGER_RESTRICTED");
+      }
       let parentId = input.parent ?? null;
       if (input.storeType === "main") {
         parentId = null;
@@ -128,6 +109,9 @@ export async function updateStore(storeId, input) {
     }
 
     if (input.isActive !== undefined) {
+      if (!isAdmin) {
+        throw new HttpError(403, "Managers can update store display settings only", "STORE_MANAGER_RESTRICTED");
+      }
       store.isActive = input.isActive;
     }
 
@@ -148,9 +132,18 @@ export async function updateStore(storeId, input) {
 }
 
 export async function deactivateStore(storeId) {
+  throw new HttpError(403, "Store deletion/deactivation is disabled for fixed stores.", "STORE_FIXED_SET");
+}
+
+export async function ensureFixedStores() {
   await withTransaction(async (session) => {
-    const store = await requireStore(storeId);
-    store.isActive = false;
-    await store.save({ session });
+    for (const item of FIXED_STORES) {
+      await Store.updateOne(
+        { code: item.code },
+        { $setOnInsert: { code: item.code, name: item.name, isActive: true } },
+        { upsert: true, session },
+      );
+    }
+    await Store.updateMany({ code: { $nin: FIXED_STORES.map((s) => s.code) } }, { $set: { isActive: false } }, { session });
   });
 }

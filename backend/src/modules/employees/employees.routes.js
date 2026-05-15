@@ -14,13 +14,13 @@ employeesRouter.use(authenticate);
 
 employeesRouter.get(
   "/",
-  authorize("admin"),
+  authorize("admin", "manager"),
   listEmployeesHandler,
 );
-employeesRouter.post("/", authorize("admin"), createEmployeeHandler);
+employeesRouter.post("/", authorize("admin", "manager"), createEmployeeHandler);
 employeesRouter.patch(
   "/:employeeId",
-  authorize("admin"),
+  authorize("admin", "manager"),
   updateEmployeeHandler,
 );
 employeesRouter.delete(

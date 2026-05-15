@@ -39,10 +39,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen, user, onLogout }) 
     {
       label: 'Operations',
       items: [
-        { label: 'POS Terminal', icon: 'POS', path: '/pos', roles: ['Admin', 'Manager', 'Sales', 'Staff'], badge: 'Fast' },
-        { label: 'Sales', icon: 'SL', path: '/sales', roles: ['Admin', 'Manager', 'Sales', 'Staff'] },
-        { label: 'Buyback', icon: 'BB', path: '/buyback', roles: ['Admin', 'Manager'] },
-        { label: 'Repairs', icon: 'RP', path: '/repairs', roles: ['Admin', 'Manager'] },
+        { label: 'POS Terminal', icon: 'POS', path: '/pos', roles: ['Manager', 'Sales', 'Staff'], badge: 'Fast' },
+        { label: 'Sales', icon: 'SL', path: '/sales', roles: ['Manager', 'Sales', 'Staff'] },
+        { label: 'Buyback', icon: 'BB', path: '/buyback', roles: ['Admin', 'Manager', 'Sales', 'Staff'] },
+        { label: 'Repairs', icon: 'RP', path: '/repairs', roles: ['Manager', 'Sales', 'Staff'] },
       ],
     },
     {
@@ -50,7 +50,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen, user, onLogout }) 
       items: [
         { label: 'Customers', icon: 'CU', path: '/customers', roles: ['Admin', 'Manager', 'Sales', 'Staff'] },
         { label: 'Inventory', icon: 'IV', path: '/inventory', roles: ['Admin', 'Manager'] },
-        { label: 'Employees', icon: 'EM', path: '/employees', roles: ['Admin'] },
+        { label: 'User Management', icon: 'EM', path: '/employees', roles: ['Admin', 'Manager'] },
       ],
     },
   ];

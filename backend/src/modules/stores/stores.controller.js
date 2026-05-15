@@ -1,21 +1,10 @@
 import { z } from "zod";
 import { HttpError } from "../../utils/httpError.js";
 import {
-  createStore,
-  deactivateStore,
   listStores,
   updateStore,
 } from "./stores.service.js";
-
 const objectIdSchema = z.string().regex(/^[a-f\d]{24}$/i, "Invalid identifier");
-
-const createStoreSchema = z.object({
-  name: z.string().min(1).max(150),
-  code: z.string().min(1).max(30),
-  store_type: z.enum(["main", "addon"]).default("addon"),
-  parent: objectIdSchema.nullable().optional(),
-  is_active: z.boolean().default(true),
-});
 
 const updateStoreSchema = z.object({
   name: z.string().min(1).max(150).optional(),
@@ -41,36 +30,9 @@ export async function listStoresHandler(req, res, next) {
   }
 }
 
-export async function createStoreHandler(req, res, next) {
-  try {
-    const payload = createStoreSchema.parse(req.body);
-
-    const row = await createStore({
-      name: payload.name,
-      code: payload.code,
-      storeType: payload.store_type,
-      parent: payload.parent ?? null,
-      isActive: payload.is_active,
-    });
-
-    res.status(201).json(row);
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      next(
-        new HttpError(
-          400,
-          error.issues[0]?.message || "Invalid request",
-          "VALIDATION_ERROR",
-        ),
-      );
-      return;
-    }
-    next(error);
-  }
-}
-
 export async function updateStoreHandler(req, res, next) {
   try {
+    if (!req.auth) throw new HttpError(401, "Authentication required", "AUTH_REQUIRED");
     const params = storeIdParamsSchema.parse(req.params);
     const payload = updateStoreSchema.parse(req.body);
 
@@ -80,29 +42,10 @@ export async function updateStoreHandler(req, res, next) {
       storeType: payload.store_type,
       parent: payload.parent,
       isActive: payload.is_active,
+      actorRoles: req.auth.roles,
     });
 
     res.status(200).json(row);
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      next(
-        new HttpError(
-          400,
-          error.issues[0]?.message || "Invalid request",
-          "VALIDATION_ERROR",
-        ),
-      );
-      return;
-    }
-    next(error);
-  }
-}
-
-export async function deleteStoreHandler(req, res, next) {
-  try {
-    const params = storeIdParamsSchema.parse(req.params);
-    await deactivateStore(params.storeId);
-    res.status(204).send();
   } catch (error) {
     if (error instanceof z.ZodError) {
       next(

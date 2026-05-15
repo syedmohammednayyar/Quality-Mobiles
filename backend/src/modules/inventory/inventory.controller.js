@@ -159,11 +159,10 @@ export async function adjustInventoryHandler(req, res, next) {
 export async function transferStockHandler(req, res, next) {
   try {
     if (!req.auth) throw new HttpError(401, "Authentication required", "AUTH_REQUIRED");
-    if (!isAdmin(req.auth)) {
-      throw new HttpError(403, "Only admins can transfer stock between stores", "TRANSFER_ADMIN_ONLY");
-    }
 
     const body = transferBodySchema.parse(req.body);
+    assertStoreAccess(req.auth, body.from_store_id);
+    assertStoreAccess(req.auth, body.to_store_id);
     const result = await transferStock({
       fromStoreId: body.from_store_id,
       toStoreId: body.to_store_id,

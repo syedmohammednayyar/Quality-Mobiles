@@ -6,6 +6,7 @@ import {
   deleteSale,
   getSaleById,
   listSales,
+  lookupSaleJob,
   updateSale,
 } from "./sales.service.js";
 
@@ -33,6 +34,10 @@ const createSaleSchema = z.object({
   gotAmount: z.number().min(0).optional(),
   gift: z.string().max(150).optional(),
   salespersonName: z.string().max(150).optional(),
+  attendedBy: objectIdSchema.optional(),
+  customerSource: z.enum(["walk_in", "referred"]).optional(),
+  referredByEmployee: objectIdSchema.optional(),
+  referralNotes: z.string().max(500).optional(),
   note: z.string().max(500).optional(),
   items: z
     .array(
@@ -64,6 +69,10 @@ const updateSaleSchema = z.object({
 
 const saleIdParamsSchema = z.object({
   saleId: objectIdSchema,
+});
+
+const jobLookupParamsSchema = z.object({
+  jobNumber: z.string().min(1).max(120),
 });
 
 const listSalesQuerySchema = z.object({
@@ -136,10 +145,37 @@ export async function createSaleHandler(req, res, next) {
   }
 }
 
+export async function lookupSaleJobHandler(req, res, next) {
+  try {
+    if (!req.auth) {
+      throw new HttpError(401, "Authentication required", "AUTH_REQUIRED");
+    }
+    const params = jobLookupParamsSchema.parse(req.params);
+    const result = await lookupSaleJob(params.jobNumber, req.auth);
+    res.status(200).json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      next(
+        new HttpError(
+          400,
+          error.issues[0]?.message || "Invalid request",
+          "VALIDATION_ERROR",
+        ),
+      );
+      return;
+    }
+    next(error);
+  }
+}
+
 export async function getSaleByIdHandler(req, res, next) {
   try {
+    if (!req.auth) {
+      throw new HttpError(401, "Authentication required", "AUTH_REQUIRED");
+    }
     const params = saleIdParamsSchema.parse(req.params);
     const result = await getSaleById(params.saleId);
+    assertStoreAccess(req.auth, result.sale.store);
     res.status(200).json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -164,6 +200,8 @@ export async function updateSaleHandler(req, res, next) {
 
     const params = saleIdParamsSchema.parse(req.params);
     const payload = updateSaleSchema.parse(req.body);
+    const existing = await getSaleById(params.saleId);
+    assertStoreAccess(req.auth, existing.sale.store);
     if (payload.storeId) assertStoreAccess(req.auth, payload.storeId);
 
     const result = await updateSale(params.saleId, {
@@ -198,6 +236,8 @@ export async function deleteSaleHandler(req, res, next) {
     }
 
     const params = saleIdParamsSchema.parse(req.params);
+    const existing = await getSaleById(params.saleId);
+    assertStoreAccess(req.auth, existing.sale.store);
     await deleteSale(params.saleId, req.auth.userId);
     res.status(204).send();
   } catch (error) {

@@ -46,6 +46,6 @@ inventoryRouter.patch(
 
 inventoryRouter.post(
   "/transfers",
-  authorize("admin"),
+  authorize("admin", "manager", "inventory_manager"),
   transferStockHandler,
 );

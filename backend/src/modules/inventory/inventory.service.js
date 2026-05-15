@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { Product, StockLedger, Store, StoreInventory } from "../../db/models.js";
+import { BulkInventory, Product, SerializedInventory, StockLedger, Store, StoreInventory } from "../../db/models.js";
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
 import { assertObjectId, toObjectId } from "../../utils/ids.js";
@@ -58,6 +58,7 @@ function mapInventoryItem(store, item, updatedAt) {
     images: product.images || [],
     remarks: product.remarks || "",
     device_notes: product.deviceNotes || "",
+    inventory_mode: product.inventoryMode || "bulk",
     updated_at: updatedAt,
   };
 }
@@ -111,33 +112,72 @@ export async function listStoreInventory(storeId, options = {}) {
   const store = await requireStore(storeId);
   const limit = Math.max(1, Math.min(Number(options.limit || 100), 500));
   const offset = Math.max(0, Number(options.offset || 0));
-
-  const inventory = await StoreInventory.findOne({ store: store._id })
-    .populate({
+  const [products, bulkRows, serializedRows, legacyInventory] = await Promise.all([
+    Product.find({ isActive: true }).sort({ name: 1 }),
+    BulkInventory.find({ store: store._id }).lean(),
+    SerializedInventory.aggregate([
+      { $match: { store: store._id, status: "in_stock" } },
+      {
+        $group: {
+          _id: "$product",
+          quantity: { $sum: 1 },
+          updatedAt: { $max: "$updatedAt" },
+        },
+      },
+    ]),
+    StoreInventory.findOne({ store: store._id }).populate({
       path: "items.product",
       match: { isActive: true },
-    });
+    }),
+  ]);
 
-  if (!inventory) {
-    return { rows: [], total: 0, limit, offset };
+  const productMap = new Map(products.map((product) => [product._id.toString(), product]));
+  const rows = [];
+
+  bulkRows.forEach((item) => {
+    const product = productMap.get(String(item.product));
+    if (!product) return;
+    rows.push(mapInventoryItem(store, {
+      product,
+      quantity: Number(item.quantity || 0),
+      reservedQuantity: Number(item.reservedQuantity || 0),
+      minStockLevel: Number(item.minStockLevel || 0),
+    }, item.updatedAt || new Date().toISOString()));
+  });
+
+  serializedRows.forEach((item) => {
+    const product = productMap.get(String(item._id));
+    if (!product) return;
+    rows.push(mapInventoryItem(store, {
+      product,
+      quantity: Number(item.quantity || 0),
+      reservedQuantity: 0,
+      minStockLevel: 0,
+    }, item.updatedAt || new Date().toISOString()));
+  });
+
+  if (rows.length === 0 && legacyInventory) {
+    legacyInventory.items
+      .filter((item) => item.product)
+      .forEach((item) => {
+        rows.push(mapInventoryItem(store, item, legacyInventory.updatedAt));
+      });
   }
 
-  let rows = inventory.items
-    .filter((item) => item.product)
-    .map((item) => mapInventoryItem(store, item, inventory.updatedAt))
+  let filteredRows = rows
     .filter((row) => rowMatches(row, options.search || ""))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   if (options.category) {
-    rows = rows.filter((row) => row.category === options.category);
+    filteredRows = filteredRows.filter((row) => row.category === options.category);
   }
 
   if (options.stockStatus) {
-    rows = rows.filter((row) => row.stock_status === options.stockStatus);
+    filteredRows = filteredRows.filter((row) => row.stock_status === options.stockStatus);
   }
 
-  const total = rows.length;
-  return { rows: rows.slice(offset, offset + limit), total, limit, offset };
+  const total = filteredRows.length;
+  return { rows: filteredRows.slice(offset, offset + limit), total, limit, offset };
 }
 
 export async function listLowStock(storeId) {

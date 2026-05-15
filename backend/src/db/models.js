@@ -36,6 +36,9 @@ const customerSchema = new mongoose.Schema({
   fullName: { type: String, required: true },
   phone: { type: String, sparse: true, unique: true },
   email: { type: String, sparse: true, unique: true, lowercase: true },
+  sourceType: { type: String, enum: ["walk_in", "referred"], default: "walk_in" },
+  referredByEmployee: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
+  sourceNotes: String,
 }, { timestamps: true });
 
 const productSchema = new mongoose.Schema({
@@ -68,6 +71,7 @@ const productSchema = new mongoose.Schema({
   images: [String],
   remarks: String,
   deviceNotes: String,
+  inventoryMode: { type: String, enum: ["serialized", "bulk"], default: "bulk", index: true },
   isActive: { type: Boolean, default: true },
   isGift: { type: Boolean, default: false },
   giftCategory: String,
@@ -75,6 +79,7 @@ const productSchema = new mongoose.Schema({
   icNumber: String,
   icLocked: { type: Boolean, default: false },
 }, { timestamps: true });
+storeSchema.index({ code: 1, isActive: 1 });
 
 productSchema.index({
   jobId: 'text',
@@ -117,6 +122,35 @@ const stockLedgerSchema = new mongoose.Schema({
 
 stockLedgerSchema.index({ store: 1, product: 1, createdAt: -1 });
 stockLedgerSchema.index({ referenceType: 1, referenceId: 1 });
+
+const serializedInventorySchema = new mongoose.Schema({
+  serialId: { type: String, required: true, unique: true, index: true },
+  product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true, index: true },
+  imei: { type: String, sparse: true, unique: true, index: true },
+  serialNumber: { type: String, sparse: true, unique: true, index: true },
+  barcode: { type: String, sparse: true, unique: true, index: true },
+  jobNumber: { type: String, index: true },
+  store: { type: mongoose.Schema.Types.ObjectId, ref: "Store", required: true, index: true },
+  status: {
+    type: String,
+    enum: ["in_stock", "reserved", "sold", "transferred", "repair", "buyback_hold"],
+    default: "in_stock",
+    index: true,
+  },
+  addedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  notes: String,
+}, { timestamps: true });
+serializedInventorySchema.index({ store: 1, product: 1, status: 1, createdAt: -1 });
+
+const bulkInventorySchema = new mongoose.Schema({
+  product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
+  store: { type: mongoose.Schema.Types.ObjectId, ref: "Store", required: true },
+  quantity: { type: Number, default: 0, min: 0 },
+  reservedQuantity: { type: Number, default: 0, min: 0 },
+  minStockLevel: { type: Number, default: 0, min: 0 },
+  addedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+}, { timestamps: true });
+bulkInventorySchema.index({ store: 1, product: 1 }, { unique: true });
 
 const saleSchema = new mongoose.Schema({
   saleNo: { type: String, required: true, unique: true },
@@ -162,6 +196,10 @@ const saleSchema = new mongoose.Schema({
   gotAmount: { type: Number, default: 0, min: 0 },
   gift: String,
   salespersonName: String,
+  attendedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
+  customerSource: { type: String, enum: ["walk_in", "referred"], default: "walk_in" },
+  referredByEmployee: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
+  referralNotes: String,
   icLocked: { type: Boolean, default: false },
   transactionDate: { type: Date, default: Date.now },
 }, { timestamps: true });
@@ -314,6 +352,54 @@ const storeManagerAssignmentSchema = new mongoose.Schema({
   store: { type: mongoose.Schema.Types.ObjectId, ref: 'Store', required: true },
   isActive: { type: Boolean, default: true },
 }, { timestamps: true });
+storeManagerAssignmentSchema.index({ user: 1, store: 1 }, { unique: true });
+
+const employeeStoreAssignmentSchema = new mongoose.Schema({
+  employee: { type: mongoose.Schema.Types.ObjectId, ref: "Employee", required: true },
+  store: { type: mongoose.Schema.Types.ObjectId, ref: "Store", required: true },
+  role: { type: String, required: true, enum: ["manager", "staff"] },
+  assignedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  assignedAt: { type: Date, default: Date.now },
+  status: { type: String, required: true, default: "active", enum: ["active", "inactive"] },
+}, { timestamps: true });
+employeeStoreAssignmentSchema.index({ employee: 1, store: 1 }, { unique: true });
+employeeStoreAssignmentSchema.index({ store: 1, role: 1, status: 1 });
+
+const employeeCredentialSchema = new mongoose.Schema({
+  employee: { type: mongoose.Schema.Types.ObjectId, ref: "Employee", required: true, unique: true },
+  user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, unique: true },
+  email: { type: String, required: true, lowercase: true, unique: true },
+  passwordHash: { type: String, required: true },
+  status: {
+    type: String,
+    required: true,
+    default: "pending",
+    enum: ["pending", "approved", "rejected", "suspended", "deactivated", "locked"],
+  },
+  approvalStatus: { type: String, required: true, default: "pending", enum: ["pending", "approved", "rejected"] },
+  approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  approvedAt: Date,
+  rejectedReason: String,
+  lastLogin: Date,
+  loginAttempts: { type: Number, default: 0, min: 0 },
+  accountLocked: { type: Boolean, default: false },
+}, { timestamps: true });
+employeeCredentialSchema.index({ status: 1, approvalStatus: 1, updatedAt: -1 });
+
+const signupRequestSchema = new mongoose.Schema({
+  employee: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
+  user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  employeeName: { type: String, required: true },
+  email: { type: String, required: true, lowercase: true },
+  phone: String,
+  requestedRole: { type: String, required: true, enum: ["manager", "cashier", "inventory_manager"] },
+  requestedStore: { type: mongoose.Schema.Types.ObjectId, ref: "Store", required: true },
+  requestStatus: { type: String, required: true, default: "pending", enum: ["pending", "approved", "rejected"] },
+  reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  reviewedAt: Date,
+  rejectionReason: String,
+}, { timestamps: true });
+signupRequestSchema.index({ requestedStore: 1, requestStatus: 1, createdAt: -1 });
 
 const sequenceCounterSchema = new mongoose.Schema({
   key: { type: String, required: true, unique: true },
@@ -326,7 +412,10 @@ export const Store = mongoose.model('Store', storeSchema);
 export const Employee = mongoose.model('Employee', employeeSchema);
 export const Customer = mongoose.model('Customer', customerSchema);
 export const Product = mongoose.model('Product', productSchema);
+export const ProductMaster = Product;
 export const StoreInventory = mongoose.model('StoreInventory', storeInventorySchema);
+export const SerializedInventory = mongoose.model("SerializedInventory", serializedInventorySchema);
+export const BulkInventory = mongoose.model("BulkInventory", bulkInventorySchema);
 export const StockLedger = mongoose.model('StockLedger', stockLedgerSchema);
 export const StockMovement = StockLedger;
 export const Sale = mongoose.model('Sale', saleSchema);
@@ -340,5 +429,8 @@ export const GiftTransaction = mongoose.model('GiftTransaction', giftTransaction
 export const AuditLog = mongoose.model('AuditLog', auditLogSchema);
 export const ExportLog = mongoose.model('ExportLog', exportLogSchema);
 export const StoreManagerAssignment = mongoose.model('StoreManagerAssignment', storeManagerAssignmentSchema);
+export const EmployeeStoreAssignment = mongoose.model("EmployeeStoreAssignment", employeeStoreAssignmentSchema);
+export const EmployeeCredential = mongoose.model("EmployeeCredential", employeeCredentialSchema);
+export const SignupRequest = mongoose.model("SignupRequest", signupRequestSchema);
 export const SequenceCounter = mongoose.model('SequenceCounter', sequenceCounterSchema);
 

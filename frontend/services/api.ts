@@ -64,6 +64,7 @@ export interface ApiProduct {
   images?: string[];
   remarks?: string;
   device_notes?: string;
+  inventory_mode?: "serialized" | "bulk";
   active: boolean;
 }
 
@@ -127,8 +128,14 @@ export interface CreateProductPayload {
   selling_price?: string;
   discount?: string;
   tax?: string;
+  inventory_mode?: "serialized" | "bulk";
   stock_quantity: number;
   min_stock_level?: number;
+  serialized_entries?: Array<{
+    imei?: string;
+    serial_number?: string;
+    barcode?: string;
+  }>;
   primary_store_ref?: string | null;
   supplier_name?: string;
   supplier_contact?: string;
@@ -159,6 +166,10 @@ export interface ApiSale {
   got_amount?: string;
   gift?: string;
   salesperson_name?: string;
+  attended_by_employee_id?: string | null;
+  customer_source?: "walk_in" | "referred";
+  referred_by_employee_id?: string | null;
+  referral_notes?: string;
   sold_at: string;
   notes: string;
   items: ApiSaleItem[];
@@ -382,13 +393,6 @@ export interface LoginResponse {
   user: AuthUser;
 }
 
-export interface SignupPayload {
-  name: string;
-  email: string;
-  password: string;
-  role: "Admin" | "Manager" | "Employee";
-}
-
 export interface CreateSalePayload {
   customer: string | null;
   store_ref?: string | null;
@@ -402,8 +406,22 @@ export interface CreateSalePayload {
   got_amount?: string;
   gift?: string;
   salesperson_name?: string;
+  attended_by_employee_id?: string | null;
+  customer_source?: "walk_in" | "referred";
+  referred_by_employee_id?: string | null;
+  referral_notes?: string;
   notes: string;
   items: ApiSaleItem[];
+}
+
+export interface JobLookupResponse {
+  sale: ApiSale | null;
+  product: ApiProduct | null;
+  customer: ApiCustomer | null;
+  payments: Array<{ method: string; amount: string; status?: string; reference_no?: string | null }>;
+  inventory: ApiStoreInventoryRow[];
+  buyback: ApiBuyback | null;
+  repair: ApiRepairTicket | null;
 }
 
 export interface CreateBuybackPayload {
@@ -567,6 +585,71 @@ export interface ReportDataResponse {
   rows: ReportRow[];
 }
 
+export interface ApiSignupRequest {
+  id: string;
+  employee_id: string | null;
+  employee_name: string;
+  email: string;
+  phone: string;
+  requested_role: string;
+  requested_store_ref: string | null;
+  requested_store_name: string;
+  request_status: "pending" | "approved" | "rejected";
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  rejection_reason: string;
+  created_at: string;
+}
+
+export interface ApiCredentialAccount {
+  id: string;
+  employee_id: string | null;
+  employee_name: string;
+  email: string;
+  status: "pending" | "approved" | "rejected" | "suspended" | "deactivated" | "locked";
+  approval_status: "pending" | "approved" | "rejected";
+  account_locked: boolean;
+  login_attempts: number;
+  last_login: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  rejected_reason: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminOverviewFilters {
+  quickRange?: "today" | "yesterday" | "this_week" | "this_month" | "last_month" | "custom";
+  fromDate?: string;
+  toDate?: string;
+  storeIds?: string[];
+}
+
+export interface AdminOverviewResponse {
+  filters: {
+    quickRange: string;
+    fromDate: string;
+    toDate: string;
+    storeIds: string[];
+  };
+  kpis: {
+    totalSales: number;
+    totalRepairs: number;
+    totalExpenses: number;
+    totalBuyback: number;
+    inventoryValue: number;
+    net: number;
+  };
+  counts: {
+    sales: number;
+    repairs: number;
+    buybacks: number;
+    expenses: number;
+    payments: number;
+    stores: number;
+  };
+}
+
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "/api/v1").replace(/\/$/, "");
 const TOKEN_KEY = "quality-mobiles-token";
 const USER_KEY = "quality-mobiles-user";
@@ -600,6 +683,7 @@ type BackendInventoryRow = {
   reserved_quantity: number;
   min_stock_level: number;
   unit_price: string;
+  inventory_mode?: "serialized" | "bulk";
   updated_at: string;
 };
 
@@ -627,6 +711,10 @@ type BackendSale = {
   gotAmount?: number;
   gift?: string | null;
   salespersonName?: string | null;
+  attendedBy?: string | null;
+  customerSource?: "walk_in" | "referred";
+  referredByEmployee?: string | null;
+  referralNotes?: string | null;
   created_at: string;
   createdAt?: string;
 };
@@ -763,6 +851,7 @@ function mapApiProduct(row: ApiProduct): ApiProduct {
     final_price: toMoney(row.final_price || row.price),
     stock_quantity: Number(row.stock_quantity || 0),
     min_stock_level: Number(row.min_stock_level || 0),
+    inventory_mode: row.inventory_mode || "bulk",
     active: Boolean(row.active),
     category: row.category ? normalizeProductCategory(row.category) : undefined,
     description: row.description || "",
@@ -881,6 +970,7 @@ function inventoryRowToProduct(row: ApiStoreInventoryRow): ApiProduct {
     images: row.images,
     remarks: row.remarks,
     device_notes: row.device_notes,
+    inventory_mode: (row as ApiStoreInventoryRow & { inventory_mode?: "serialized" | "bulk" }).inventory_mode || "bulk",
     active: true,
   };
 }
@@ -911,6 +1001,10 @@ function mapSaleDetailToApiSale(detail: BackendSaleDetailResponse): ApiSale {
     got_amount: toMoney(detail.sale.gotAmount || detail.sale.amount_paid),
     gift: detail.sale.gift || "",
     salesperson_name: detail.sale.salespersonName || "",
+    attended_by_employee_id: detail.sale.attendedBy ? String(detail.sale.attendedBy) : null,
+    customer_source: detail.sale.customerSource || "walk_in",
+    referred_by_employee_id: detail.sale.referredByEmployee ? String(detail.sale.referredByEmployee) : null,
+    referral_notes: detail.sale.referralNotes || "",
     sold_at: detail.sale.created_at || detail.sale.createdAt || nowIso(),
     notes: detail.sale.note || "",
     items: detail.items.map((item) => ({
@@ -978,18 +1072,6 @@ export function clearSessionUser(): void {
 
 export async function login(payload: { username: string; password: string }): Promise<LoginResponse> {
   const result = await apiRequest<{ accessToken: string; user: BackendAuthUser }>("/auth/login", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  }, false);
-
-  return {
-    token: result.accessToken,
-    user: mapAuthUser(result.user),
-  };
-}
-
-export async function signup(payload: SignupPayload): Promise<LoginResponse> {
-  const result = await apiRequest<{ accessToken: string; user: BackendAuthUser }>("/auth/signup", {
     method: "POST",
     body: JSON.stringify(payload),
   }, false);
@@ -1101,7 +1183,7 @@ export async function createCustomer(payload: Pick<ApiCustomer, "name" | "email"
   };
 }
 
-export async function updateCustomer(id: number, payload: Partial<Pick<ApiCustomer, "name" | "email" | "phone" | "store_ref">>): Promise<ApiCustomer> {
+export async function updateCustomer(id: string, payload: Partial<Pick<ApiCustomer, "name" | "email" | "phone" | "store_ref">>): Promise<ApiCustomer> {
   const row = await apiRequest<ApiCustomer>(`/customers/${id}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
@@ -1114,7 +1196,7 @@ export async function updateCustomer(id: number, payload: Partial<Pick<ApiCustom
   };
 }
 
-export async function deleteCustomer(id: number): Promise<void> {
+export async function deleteCustomer(id: string): Promise<void> {
   await apiRequest<void>(`/customers/${id}`, { method: "DELETE" });
 }
 
@@ -1149,7 +1231,7 @@ export async function createEmployee(payload: CreateEmployeePayload): Promise<Ap
   };
 }
 
-export async function updateEmployee(id: number, payload: Partial<CreateEmployeePayload>): Promise<ApiEmployee> {
+export async function updateEmployee(id: string, payload: Partial<CreateEmployeePayload>): Promise<ApiEmployee> {
   const row = await apiRequest<ApiEmployee>(`/employees/${id}`, {
     method: "PATCH",
     body: JSON.stringify({
@@ -1171,8 +1253,44 @@ export async function updateEmployee(id: number, payload: Partial<CreateEmployee
   };
 }
 
-export async function deleteEmployee(id: number): Promise<void> {
+export async function deleteEmployee(id: string): Promise<void> {
   await apiRequest<void>(`/employees/${id}`, { method: "DELETE" });
+}
+
+export async function listCredentialAccounts(params: { status?: string; approval_status?: string } = {}): Promise<ApiCredentialAccount[]> {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.approval_status) query.set("approval_status", params.approval_status);
+  const result = await apiRequest<{ rows: ApiCredentialAccount[] }>(`/employee-access/credentials${query.toString() ? `?${query.toString()}` : ""}`);
+  return result.rows.map((row) => ({
+    ...row,
+    id: String(row.id),
+    employee_id: row.employee_id ? String(row.employee_id) : null,
+  }));
+}
+
+export async function updateCredentialStatus(employeeId: string, status: ApiCredentialAccount["status"]): Promise<ApiCredentialAccount> {
+  const row = await apiRequest<ApiCredentialAccount>(`/employee-access/credentials/${employeeId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+  return {
+    ...row,
+    id: String(row.id),
+    employee_id: row.employee_id ? String(row.employee_id) : null,
+  };
+}
+
+export async function resetCredentialPassword(employeeId: string, password: string): Promise<void> {
+  await apiRequest(`/employee-access/credentials/${employeeId}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+}
+
+export async function listEmployeeAccessStores(): Promise<Array<{ id: string; name: string; code: string }>> {
+  const result = await apiRequest<{ rows: Array<{ id: string; name: string; code: string }> }>("/employee-access/stores");
+  return result.rows.map((s) => ({ ...s, id: String(s.id) }));
 }
 
 export async function listProducts(storeId?: string): Promise<ApiProduct[]> {
@@ -1243,8 +1361,10 @@ export async function createProduct(_payload: CreateProductPayload): Promise<Api
       selling_price: _payload.selling_price !== undefined ? toNumber(_payload.selling_price) : undefined,
       discount: toNumber(_payload.discount),
       tax: toNumber(_payload.tax),
+      inventory_mode: _payload.inventory_mode,
       stock_quantity: Number(_payload.stock_quantity || 0),
       min_stock_level: Number(_payload.min_stock_level || 0),
+      serialized_entries: _payload.serialized_entries,
       primary_store_ref: _payload.primary_store_ref ?? null,
       supplier_name: _payload.supplier_name,
       supplier_contact: _payload.supplier_contact,
@@ -1281,8 +1401,10 @@ export async function updateProduct(_id: string, _payload: Partial<CreateProduct
     ...(_payload.selling_price !== undefined ? { selling_price: toNumber(_payload.selling_price) } : {}),
     ...(_payload.discount !== undefined ? { discount: toNumber(_payload.discount) } : {}),
     ...(_payload.tax !== undefined ? { tax: toNumber(_payload.tax) } : {}),
+    ...(_payload.inventory_mode !== undefined ? { inventory_mode: _payload.inventory_mode } : {}),
     ...(_payload.stock_quantity !== undefined ? { stock_quantity: Number(_payload.stock_quantity) } : {}),
     ...(_payload.min_stock_level !== undefined ? { min_stock_level: Number(_payload.min_stock_level) } : {}),
+    ...(_payload.serialized_entries !== undefined ? { serialized_entries: _payload.serialized_entries } : {}),
     ...(_payload.primary_store_ref !== undefined ? { primary_store_ref: _payload.primary_store_ref } : {}),
     ...(_payload.supplier_name !== undefined ? { supplier_name: _payload.supplier_name } : {}),
     ...(_payload.supplier_contact !== undefined ? { supplier_contact: _payload.supplier_contact } : {}),
@@ -1388,6 +1510,10 @@ export async function createSale(payload: CreateSalePayload): Promise<ApiSale> {
       gotAmount: toNumber(payload.got_amount),
       gift: payload.gift,
       salespersonName: payload.salesperson_name,
+      attendedBy: payload.attended_by_employee_id || undefined,
+      customerSource: payload.customer_source || "walk_in",
+      referredByEmployee: payload.referred_by_employee_id || undefined,
+      referralNotes: payload.referral_notes || undefined,
       note: payload.notes,
       items: payload.items.map((item) => ({
         productId: item.product,
@@ -2094,4 +2220,57 @@ export async function downloadBriefReportCSV(params: BriefReportParams): Promise
 
   const csv = toCsv(headers, rows);
   return new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
+}
+
+export async function lookupSaleJob(jobNumber: string): Promise<JobLookupResponse> {
+  const encoded = encodeURIComponent(jobNumber.trim());
+  const result = await apiRequest<JobLookupResponse>(`/sales/job-lookup/${encoded}`);
+  return {
+    ...result,
+    sale: result.sale || null,
+    product: result.product ? mapApiProduct(result.product) : null,
+    customer: result.customer ? { ...result.customer, id: String(result.customer.id) } : null,
+    inventory: (result.inventory || []).map((row) => ({
+      ...row,
+      store_id: String(row.store_id),
+      product_id: String(row.product_id),
+      unit_price: toMoney(row.unit_price),
+    })),
+    buyback: result.buyback ? normalizeBuybackRow(result.buyback) : null,
+    repair: result.repair ? {
+      ...result.repair,
+      id: String(result.repair.id),
+      customer: result.repair.customer === null || result.repair.customer === undefined ? null : String(result.repair.customer),
+      store_ref: result.repair.store_ref === null || result.repair.store_ref === undefined ? null : String(result.repair.store_ref),
+      parts: result.repair.parts || [],
+    } : null,
+    payments: (result.payments || []).map((entry) => ({
+      ...entry,
+      amount: toMoney(entry.amount),
+    })),
+  };
+}
+
+export async function getAdminReportOverview(params: AdminOverviewFilters): Promise<AdminOverviewResponse> {
+  const query = new URLSearchParams();
+  if (params.quickRange) query.set("quickRange", params.quickRange);
+  if (params.fromDate) query.set("fromDate", params.fromDate);
+  if (params.toDate) query.set("toDate", params.toDate);
+  if (params.storeIds?.length) query.set("storeIds", params.storeIds.join(","));
+  const res = await apiRequest<{ success: boolean; data: AdminOverviewResponse }>(`/reports/admin/overview?${query.toString()}`);
+  return res.data;
+}
+
+export async function exportAdminReportPdf(params: AdminOverviewFilters): Promise<Blob> {
+  const query = new URLSearchParams();
+  if (params.quickRange) query.set("quickRange", params.quickRange);
+  if (params.fromDate) query.set("fromDate", params.fromDate);
+  if (params.toDate) query.set("toDate", params.toDate);
+  if (params.storeIds?.length) query.set("storeIds", params.storeIds.join(","));
+  const token = getAuthToken();
+  const response = await fetch(`${API_BASE}/reports/admin/export/pdf?${query.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) throw new ApiError(response.status, "Failed to export PDF");
+  return response.blob();
 }

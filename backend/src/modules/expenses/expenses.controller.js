@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Expense } from "../../db/models.js";
 import { HttpError } from "../../utils/httpError.js";
 import { assertStoreAccess, isAdmin } from "../../utils/storeAccess.js";
 import {
@@ -82,6 +83,9 @@ export async function updateExpenseHandler(req, res, next) {
   try {
     const params = expenseIdParamsSchema.parse(req.params);
     const payload = updateExpenseSchema.parse(req.body);
+    const existing = await Expense.findById(params.expenseId).select("store").lean();
+    if (!existing) throw new HttpError(404, "Expense not found", "EXPENSE_NOT_FOUND");
+    if (existing.store) assertStoreAccess(req.auth, existing.store);
     if (payload.store_ref) assertStoreAccess(req.auth, payload.store_ref);
 
     const row = await updateExpense(params.expenseId, {
@@ -112,6 +116,9 @@ export async function updateExpenseHandler(req, res, next) {
 export async function deleteExpenseHandler(req, res, next) {
   try {
     const params = expenseIdParamsSchema.parse(req.params);
+    const existing = await Expense.findById(params.expenseId).select("store").lean();
+    if (!existing) throw new HttpError(404, "Expense not found", "EXPENSE_NOT_FOUND");
+    if (existing.store) assertStoreAccess(req.auth, existing.store);
     await deleteExpense(params.expenseId);
     res.status(204).send();
   } catch (error) {

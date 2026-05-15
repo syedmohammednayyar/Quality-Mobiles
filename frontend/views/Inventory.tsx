@@ -308,7 +308,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
         </div>
         <div className="inventory-top-actions">
           {isAdmin && <button className="btn btn-secondary" onClick={() => setShowTransferModal(true)}>Transfer</button>}
-          {isAdmin && <button className="btn btn-primary" onClick={openNewProduct}>New Product</button>}
+          {(isAdmin || isManager) && <button className="btn btn-primary" onClick={openNewProduct}>New Product</button>}
         </div>
       </div>
 
