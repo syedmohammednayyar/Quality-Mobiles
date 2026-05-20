@@ -135,7 +135,7 @@ const App: React.FC = () => {
               <div style={{ maxWidth: '1600px', margin: '0 auto' }}>
                 <Routes>
                   <Route path="/dashboard" element={privileged ? <Dashboard user={user} /> : <Navigate to={defaultPath} replace />} />
-                  <Route path="/sales" element={salesUser ? <Sales user={user} /> : <Navigate to={defaultPath} replace />} />
+                  <Route path="/sales" element={salesUser || user?.role === 'Admin' ? <Sales user={user} /> : <Navigate to={defaultPath} replace />} />
                   <Route path="/pos" element={salesUser ? <POS user={user} /> : <Navigate to={defaultPath} replace />} />
                   <Route path="/buyback" element={adminOrManager || user?.role === 'Sales' || user?.role === 'Staff' ? <Buyback user={user} /> : <Navigate to={defaultPath} replace />} />
                   <Route path="/inventory" element={adminOrManager ? <Inventory user={user} stores={stores} /> : <Navigate to={defaultPath} replace />} />

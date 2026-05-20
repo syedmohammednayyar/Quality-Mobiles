@@ -7,7 +7,6 @@ import {
   listEmployeeAccessStores,
   listEmployees,
   resetCredentialPassword,
-  updateCredentialStatus,
   updateEmployee,
   updateStore,
   type ApiCredentialAccount,
@@ -52,7 +51,6 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate
   const [passwordResetError, setPasswordResetError] = useState('');
   const [filterRole, setFilterRole] = useState('All');
   const [filterStore, setFilterStore] = useState('All Stores');
-  const [filterStatus, setFilterStatus] = useState('All Statuses');
   const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
   const [pendingDeleteEmployeeId, setPendingDeleteEmployeeId] = useState<string | null>(null);
   const [editingStoreId, setEditingStoreId] = useState<string | null>(null);
@@ -112,14 +110,13 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate
   );
 
   const filtersRole = ['All', 'Manager', 'Salesman', 'Technician', 'Staff'];
-  const filtersStatus = ['All Statuses', 'approved', 'suspended', 'deactivated', 'locked'];
   const storeOptions = ['All Stores', ...Array.from(new Set(employees.map((employee) => employee.store || 'Unassigned')))];
 
   const filteredEmployees = employees.filter((employee) => {
     const credential = credentialByEmployeeId.get(employee.id);
     const roleOk = filterRole === 'All' || employee.role === filterRole;
     const storeOk = filterStore === 'All Stores' || (employee.store || 'Unassigned') === filterStore;
-    const statusOk = filterStatus === 'All Statuses' || credential?.status === filterStatus;
+    const statusOk = true;
     const queryOk = !query
       || employee.name.toLowerCase().includes(query)
       || (employee.email || '').toLowerCase().includes(query)
@@ -222,16 +219,6 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate
     }
   };
 
-  const handleStatusUpdate = async (employeeId: string, status: ApiCredentialAccount['status']) => {
-    try {
-      await updateCredentialStatus(employeeId, status);
-      await loadScreen();
-      setStatusMessage('Account status updated.');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to update account status');
-    }
-  };
-
   const handlePasswordReset = async (employeeId: string) => {
     setPasswordResetError('');
     if (!passwordResetValue || passwordResetValue.length < 8) {
@@ -283,72 +270,23 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate
         </div>
       </div>
 
-      {isPrivilegedUser(user) && (
+      {passwordResetEmployeeId && (
         <div className="card" style={{ marginBottom: 16, padding: 16 }}>
-          <h3 style={{ marginTop: 0 }}>Account Status Overview</h3>
-          <div className="table-wrapper">
-            <table className="employees-table">
-              <thead>
-                <tr>
-                  <th>User</th>
-                  <th>Email</th>
-                  <th>Status</th>
-                  <th>Approval</th>
-                  <th>Attempts</th>
-                  <th>Last Login</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {credentials.map((credential) => (
-                  <tr key={credential.id}>
-                    <td>{credential.employee_name || '-'}</td>
-                    <td>{credential.email}</td>
-                    <td>{credential.status}</td>
-                    <td>{credential.approval_status}</td>
-                    <td>{credential.login_attempts}</td>
-                    <td>{credential.last_login ? new Date(credential.last_login).toLocaleString() : '-'}</td>
-                    <td>
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        <button className="btn btn-secondary btn-sm" type="button" onClick={() => credential.employee_id && void handleStatusUpdate(String(credential.employee_id), 'approved')}>Activate</button>
-                        <button className="btn btn-secondary btn-sm" type="button" onClick={() => credential.employee_id && void handleStatusUpdate(String(credential.employee_id), 'suspended')}>Suspend</button>
-                        {isAdmin && <button className="btn btn-danger btn-sm" type="button" onClick={() => credential.employee_id && void handleStatusUpdate(String(credential.employee_id), 'deactivated')}>Deactivate</button>}
-                        {isAdmin && credential.employee_id && (
-                          <button className="btn btn-secondary btn-sm" type="button" onClick={() => {
-                            setPasswordResetEmployeeId(String(credential.employee_id));
-                            setPasswordResetValue('');
-                            setPasswordResetError('');
-                          }}>
-                            Reset Password
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {credentials.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: 16 }}>No account records found</td></tr>}
-              </tbody>
-            </table>
+          <h4 style={{ marginTop: 0 }}>Reset Password</h4>
+          <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'minmax(240px, 360px)' }}>
+            <input
+              type="password"
+              className="form-input"
+              placeholder="New password"
+              value={passwordResetValue}
+              onChange={(e) => setPasswordResetValue(e.target.value)}
+            />
           </div>
-          {passwordResetEmployeeId && (
-            <div className="card" style={{ marginTop: 16, padding: 16 }}>
-              <h4 style={{ marginTop: 0 }}>Reset Password</h4>
-              <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'minmax(240px, 360px)' }}>
-                <input
-                  type="password"
-                  className="form-input"
-                  placeholder="New password"
-                  value={passwordResetValue}
-                  onChange={(e) => setPasswordResetValue(e.target.value)}
-                />
-              </div>
-              {passwordResetError && <p style={{ color: 'var(--color-error-600)', margin: '10px 0 0' }}>{passwordResetError}</p>}
-              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                <button className="btn btn-primary" type="button" onClick={() => void handlePasswordReset(passwordResetEmployeeId)}>Save Password</button>
-                <button className="btn btn-secondary" type="button" onClick={() => setPasswordResetEmployeeId(null)}>Cancel</button>
-              </div>
-            </div>
-          )}
+          {passwordResetError && <p style={{ color: 'var(--color-error-600)', margin: '10px 0 0' }}>{passwordResetError}</p>}
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <button className="btn btn-primary" type="button" onClick={() => void handlePasswordReset(passwordResetEmployeeId)}>Save Password</button>
+            <button className="btn btn-secondary" type="button" onClick={() => setPasswordResetEmployeeId(null)}>Cancel</button>
+          </div>
         </div>
       )}
 
@@ -481,9 +419,6 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate
           <select value={filterStore} onChange={(e) => setFilterStore(e.target.value)} className="form-input" style={{ maxWidth: 220 }}>
             {storeOptions.map((store) => <option key={store} value={store}>{store}</option>)}
           </select>
-          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="form-input" style={{ maxWidth: 220 }}>
-            {filtersStatus.map((status) => <option key={status} value={status}>{status}</option>)}
-          </select>
         </div>
       </div>
 
@@ -497,7 +432,6 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate
               <th>Login</th>
               <th>Email</th>
               <th>Phone</th>
-              <th>Account Status</th>
               <th>Sales/Tickets</th>
               <th>Actions</th>
             </tr>
@@ -513,7 +447,6 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate
                   <td>{employee.login_username || '-'}</td>
                   <td className="email-cell">{employee.email || '-'}</td>
                   <td className="phone-cell">{employee.phone || '-'}</td>
-                  <td>{credential?.status || 'approved'}</td>
                   <td className="sales-cell"><strong>{employee.sales_count}</strong></td>
                   <td>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -524,6 +457,13 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate
                           <button className="btn btn-secondary btn-sm" type="button" onClick={() => setPendingDeleteEmployeeId(null)}>Cancel</button>
                         </>
                       ) : null}
+                      {isAdmin && (
+                        <button className="btn btn-secondary btn-sm" type="button" onClick={() => {
+                          setPasswordResetEmployeeId(employee.id);
+                          setPasswordResetValue('');
+                          setPasswordResetError('');
+                        }}>Reset Password</button>
+                      )}
                       {isAdmin && pendingDeleteEmployeeId !== employee.id && (
                         <button className="btn btn-danger btn-sm" type="button" onClick={() => setPendingDeleteEmployeeId(employee.id)}>Delete</button>
                       )}
@@ -532,7 +472,7 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate
                 </tr>
               );
             })}
-            {!loading && filteredEmployees.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', padding: 16 }}>No users found</td></tr>}
+            {!loading && filteredEmployees.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: 16 }}>No users found</td></tr>}
           </tbody>
         </table>
       </div>
@@ -541,7 +481,7 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate
         <div className="stat-card"><h4>Total Users</h4><p className="stat-value">{employees.length}</p></div>
         <div className="stat-card"><h4>Managers</h4><p className="stat-value">{employees.filter((employee) => employee.role === 'Manager').length}</p></div>
         <div className="stat-card"><h4>Active Accounts</h4><p className="stat-value">{credentials.filter((credential) => credential.status === 'approved').length}</p></div>
-        <div className="stat-card"><h4>Suspended/Locked</h4><p className="stat-value">{credentials.filter((credential) => credential.status === 'suspended' || credential.status === 'locked').length}</p></div>
+        <div className="stat-card"><h4>With Login</h4><p className="stat-value">{employees.filter((employee) => Boolean(employee.login_username)).length}</p></div>
       </div>
     </div>
   );

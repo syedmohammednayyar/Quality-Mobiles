@@ -128,12 +128,15 @@ const POS: React.FC<POSProps> = ({ user }) => {
     const load = async () => {
       try {
         const [storeData, employeeData] = await Promise.all([listStores(), listEmployees()]);
-        const activeStores = storeData
-          .filter((store) => store.is_active)
-          .filter((store) => user.role === 'Admin' || !user.assignedStoreId || store.id === user.assignedStoreId);
+        const activeStores = storeData.filter((store) => store.is_active);
+        const assignedStore = user.assignedStoreId
+          ? activeStores.find((store) => String(store.id) === String(user.assignedStoreId))
+          : null;
         setStores(activeStores);
         setEmployees(employeeData);
-        if (activeStores.length > 0) {
+        if (assignedStore) {
+          setCurrentStoreId(String(assignedStore.id));
+        } else if (activeStores.length > 0) {
           setCurrentStoreId(String(activeStores[0].id));
         }
       } catch (err) {
@@ -200,7 +203,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
   }, [jobNo]);
 
   const currentStore = useMemo(
-    () => stores.find((store) => String(store.id) === currentStoreId) || null,
+    () => stores.find((store) => String(store.id) === String(currentStoreId)) || null,
     [stores, currentStoreId]
   );
   const activeSalesmen = useMemo(
@@ -310,8 +313,8 @@ const POS: React.FC<POSProps> = ({ user }) => {
       setError('Cart is empty.');
       return;
     }
-    if (!currentStore) {
-      setError('Select a store before processing the sale.');
+    if (!currentStoreId) {
+      setError('Assigned store not found. Contact admin.');
       return;
     }
 
@@ -332,7 +335,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
 
       const createdSale = await createSale({
         customer: null,
-        store_ref: currentStore.id,
+        store_ref: currentStoreId,
         job_no: jobNo.trim(),
         ic_number: icNumber.trim(),
         discount_amount: discount.toFixed(2),
@@ -355,7 +358,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
         })),
       });
 
-        const refreshedProducts = await listProducts(currentStore.id);
+        const refreshedProducts = await listProducts(currentStoreId);
       setProducts(refreshedProducts.filter((product) => product.active).map(mapProduct));
 
       setStatusMessage(`Sale ${createdSale.job_no || `#${createdSale.id}`} processed: Rs ${Number(createdSale.total_amount).toLocaleString()} (${createdSale.payment_status || 'paid'}).`);
@@ -392,15 +395,9 @@ const POS: React.FC<POSProps> = ({ user }) => {
       <div className="pos-header">
         <div className="store-info">
           <h2 className="pos-title">POS Terminal</h2>
-          <p className="store-name">{currentStore?.name || 'Select Store'} - Terminal 01</p>
+          <p className="store-name">{currentStore?.name || 'Assigned Store'} - Terminal 01</p>
         </div>
-        <select value={currentStoreId} onChange={(e) => setCurrentStoreId(e.target.value)} className="input-field" style={{ maxWidth: 180, marginBottom: 0 }}>
-          <option value="">Select Store</option>
-          {stores.map((store) => (
-            <option key={store.id} value={store.id}>{store.name}</option>
-          ))}
-        </select>
-        <div className="pos-time">{new Date().toLocaleTimeString()}</div>
+        
       </div>
 
       {error && <p style={{ color: '#dc2626', marginBottom: 12 }}>{error}</p>}

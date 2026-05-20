@@ -41,6 +41,18 @@ const Header: React.FC<HeaderProps> = ({
   }, []);
 
   useEffect(() => {
+    if (user.role === 'Admin') return;
+    const assigned = stores.find((store) => String(store.id) === String(user.assignedStoreId));
+    if (!assigned) return;
+    const current = searchParams.get('store');
+    if (current !== assigned.name) {
+      const params = new URLSearchParams(searchParams);
+      params.set('store', assigned.name);
+      setSearchParams(params, { replace: true });
+    }
+  }, [searchParams, setSearchParams, stores, user.assignedStoreId, user.role]);
+
+  useEffect(() => {
     const root = document.documentElement;
     const syncThemeState = () => setIsDarkMode(root.classList.contains('dark'));
     syncThemeState();
@@ -63,6 +75,10 @@ const Header: React.FC<HeaderProps> = ({
   };
 
   const selectedStoreName = searchParams.get('store') || currentStore?.name || 'All Stores';
+  const canSwitchStore = user.role === 'Admin';
+  const assignedStoreName = stores.find((store) => String(store.id) === String(user.assignedStoreId))?.name
+    || currentStore?.name
+    || 'Assigned Store';
 
   const selectStore = (store: ApiStore | { id: string, name: string }) => {
     const params = new URLSearchParams(searchParams);
@@ -93,18 +109,20 @@ const Header: React.FC<HeaderProps> = ({
 
         <div className="header-right">
           <div className="store-switcher-wrapper" ref={storeMenuRef}>
-            <button className="store-switcher" onClick={() => setShowStoreMenu(!showStoreMenu)}>
+            <button className="store-switcher" onClick={() => canSwitchStore && setShowStoreMenu(!showStoreMenu)}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
                 <polyline points="9 22 9 12 15 12 15 22"></polyline>
               </svg>
-              <span>{selectedStoreName}</span>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="6 9 12 15 18 9"></polyline>
-              </svg>
+              <span>{canSwitchStore ? selectedStoreName : assignedStoreName}</span>
+              {canSwitchStore && (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              )}
             </button>
 
-            {showStoreMenu && (
+            {canSwitchStore && showStoreMenu && (
               <div className="dropdown-menu store-menu">
                 <button
                   className={`dropdown-item ${selectedStoreName === 'All Stores' ? 'active' : ''}`}

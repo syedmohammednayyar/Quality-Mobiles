@@ -1030,7 +1030,7 @@ const Buyback = ({ user }: { user: User }) => {
 
             <div className="panel-actions-row panel-actions-sticky">
               <button className="btn btn-primary" disabled={submitting} onClick={() => void handleCreateBuyback()}>
-                {submitting ? 'Processing...' : 'Create Buyback Request'}
+                {submitting ? 'Processing...' : 'Create Buyback'}
               </button>
               <button className="btn btn-secondary" onClick={resetForm}>Reset Form</button>
               <div className="inline-meta">
@@ -1093,7 +1093,7 @@ const Buyback = ({ user }: { user: User }) => {
                 </div>
 
                 <div className="history-strip">
-                  <h3>Audit-Friendly Timeline</h3>
+                <h3>Buyback Timeline</h3>
                   <div className="history-list">
                     <article className="history-card">
                       <div>
@@ -1135,7 +1135,7 @@ const Buyback = ({ user }: { user: User }) => {
 
         <div className="toolbar-grid">
           <div className="field-block"><label>Search</label><input className="form-input" value={filters.search} onChange={(event) => setFilters((prev) => ({ ...prev, search: event.target.value, page: 1 }))} placeholder="IMEI, model, customer, store..." /></div>
-          <div className="field-block"><label>Status</label><select className="form-input" value={filters.status} onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value as FilterState['status'], page: 1 }))}><option value="">All statuses</option>{workflowOrder.map((status) => <option key={status} value={status}>{workflowLabels[status]}</option>)}</select></div>
+          <div className="field-block"><label>Status</label><select className="form-input" value={filters.status} onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value as FilterState['status'], page: 1 }))}><option value="">All Statuses</option>{workflowOrder.map((status) => <option key={status} value={status}>{workflowLabels[status]}</option>)}</select></div>
           <div className="field-block"><label>Store</label><select className="form-input" value={filters.store_id} onChange={(event) => setFilters((prev) => ({ ...prev, store_id: event.target.value, page: 1 }))}><option value="">All stores</option>{stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select></div>
           <div className="field-block"><label>Technician</label><select className="form-input" value={filters.assigned_technician_id} onChange={(event) => setFilters((prev) => ({ ...prev, assigned_technician_id: event.target.value, page: 1 }))}><option value="">All technicians</option>{employees.filter((employee) => employee.role === 'Technician').map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></div>
           <div className="field-block"><label>From</label><input type="date" className="form-input" value={filters.from} onChange={(event) => setFilters((prev) => ({ ...prev, from: event.target.value, page: 1 }))} /></div>
@@ -1159,17 +1159,17 @@ const Buyback = ({ user }: { user: User }) => {
                 <th>Buyback ID</th>
                 <th>IMEI</th>
                 <th>Customer</th>
-                <th>Device model</th>
+                <th>Device Model</th>
                 <th>Condition</th>
-                <th>Buyback price</th>
-                <th>Resale price</th>
-                <th>Profit margin</th>
-                <th>Repair status</th>
-                <th>Workflow status</th>
-                <th>Assigned store</th>
+                <th>Buyback Price</th>
+                <th>Resale Price</th>
+                <th>Profit Margin</th>
+                <th>Repair Status</th>
+                <th>Workflow Status</th>
+                <th>Assigned Store</th>
                 <th>Technician</th>
-                <th>Buyback date</th>
-                <th>Last updated</th>
+                <th>Buyback Date</th>
+                <th>Last Updated</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -1205,7 +1205,7 @@ const Buyback = ({ user }: { user: User }) => {
                       <td>
                         <div className="row-actions">
                           <button className="btn btn-secondary btn-sm" onClick={() => { setSelectedRowId(item.id); setExpandedRowId((prev) => (prev === item.id ? null : item.id)); }}>View</button>
-                          {!isAdmin && (
+                          {isPrivilegedUser(user) && (
                             <details className="quick-actions">
                               <summary className="btn btn-primary btn-sm">Actions</summary>
                               <div className="quick-actions-menu">
@@ -1263,7 +1263,7 @@ const Buyback = ({ user }: { user: User }) => {
                 );
               }) : (
                 <tr>
-                  <td colSpan={15} className="buyback-empty">No buyback records found.</td>
+                  <td colSpan={15} className="buyback-empty">No Buyback records found.</td>
                 </tr>
               )}
             </tbody>

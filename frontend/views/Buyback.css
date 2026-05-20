@@ -118,6 +118,7 @@
 .buyback-main-column {
   display: grid;
   gap: 24px;
+  min-width: 0;
 }
 
 .buyback-sidebar {
@@ -140,6 +141,7 @@
   background:
     linear-gradient(180deg, var(--bg-primary) 0%, color-mix(in srgb, var(--bg-primary) 94%, var(--color-slate-50)) 100%);
   box-shadow: var(--shadow-sm);
+  overflow: hidden;
 }
 
 .panel-header {
@@ -172,6 +174,7 @@
 .panel-grid {
   display: grid;
   gap: 16px;
+  align-items: start;
 }
 
 .panel-grid-2 {
@@ -185,8 +188,9 @@
 .field-block {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 12px;
   min-width: 0;
+  padding: 6px 0;
 }
 
 .field-block-full {
@@ -211,6 +215,7 @@
   color: var(--text-primary);
   font: inherit;
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease, background 160ms ease;
+  box-sizing: border-box;
 }
 
 .form-input:focus {
@@ -242,11 +247,13 @@
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+  margin-top: 4px;
 }
 
 .panel-actions-sticky {
-  position: sticky;
-  bottom: 16px;
+  position: static;
+  bottom: auto;
+  margin-top: 16px;
   padding: 16px;
   border-radius: 18px;
   background: color-mix(in srgb, var(--bg-primary) 92%, var(--color-primary-50));
@@ -633,12 +640,14 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
   margin-bottom: 18px;
+  align-items: end;
 }
 
 .table-shell {
   overflow: auto;
   border-radius: 18px;
   border: 1px solid color-mix(in srgb, var(--border-color) 82%, var(--color-primary-100));
+  max-width: 100%;
 }
 
 .buyback-table {
@@ -652,12 +661,19 @@
   background: linear-gradient(180deg, color-mix(in srgb, var(--color-primary-50) 72%, var(--bg-primary)), var(--bg-primary));
 }
 
+.buyback-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: inherit;
+}
+
 .buyback-table th,
 .buyback-table td {
   padding: 14px 14px;
   text-align: left;
   border-bottom: 1px solid color-mix(in srgb, var(--border-color) 88%, var(--color-primary-100));
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 .buyback-table th {
@@ -714,6 +730,7 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  min-width: 150px;
 }
 
 .quick-actions {
@@ -766,6 +783,13 @@
 .pagination-bar {
   margin-top: 16px;
   padding-top: 8px;
+}
+
+.buyback-empty {
+  text-align: center;
+  padding: 28px 16px;
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 .buyback-table-panel .table-actions-row {
@@ -825,6 +849,7 @@
   padding: 8px 12px;
   border-radius: 12px;
   font-size: 13px;
+  white-space: nowrap;
 }
 
 @keyframes buybackShimmer {
@@ -872,6 +897,10 @@
     padding: 18px;
   }
 
+  .field-block {
+    padding: 0;
+  }
+
   .buyback-hero-metrics,
   .panel-grid-2,
   .panel-grid-3,
@@ -900,6 +929,11 @@
 
   .buyback-table {
     min-width: 1180px;
+  }
+
+  .quick-actions-menu {
+    right: auto;
+    left: 0;
   }
 
   .buyback-table-panel .inline-meta {
