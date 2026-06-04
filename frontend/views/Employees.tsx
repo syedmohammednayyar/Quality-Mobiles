@@ -92,6 +92,8 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [] }) => {
     });
   }, [employees, roleFilter, search, statusFilter, storeFilter]);
 
+  const getDisplayName = (employee: ApiEmployee) => employee.name?.trim() || 'Unnamed User';
+
   const openCreate = () => {
     setSelected(null);
     setForm({ ...emptyForm, store_ref: visibleStores[0]?.id || '' });
@@ -212,7 +214,7 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [] }) => {
           <tbody>
             {filteredUsers.map((employee) => (
               <tr key={employee.id}>
-                <td><div className="user-name-cell"><span>{employee.name.charAt(0).toUpperCase()}</span><strong>{employee.name}</strong></div></td>
+                <td><div className="user-name-cell"><span>{getDisplayName(employee).charAt(0).toUpperCase()}</span><strong>{getDisplayName(employee)}</strong></div></td>
                 <td>{employee.email || '-'}</td>
                 <td>{employee.phone || '-'}</td>
                 <td><span className={`user-role-badge ${employee.role.toLowerCase()}`}>{employee.role}</span></td>
