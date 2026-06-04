@@ -191,6 +191,86 @@ export async function exportInventoryToCSV(filters, userId) {
   });
 }
 
+/**
+ * Export buybacks to CSV
+ */
+export async function exportBuybacksToCSV(filters, userId) {
+  return await withTransaction(async (session) => {
+    const query = {};
+    if (filters.storeId) {
+      query.store = filters.storeId;
+    }
+
+    if (filters.fromDate || filters.toDate) {
+      query.createdAt = {};
+      if (filters.fromDate) {
+        query.createdAt.$gte = new Date(filters.fromDate);
+      }
+      if (filters.toDate) {
+        const toDate = new Date(filters.toDate);
+        toDate.setDate(toDate.getDate() + 1);
+        query.createdAt.$lt = toDate;
+      }
+    }
+
+    const buybacks = await Buyback.find(query).sort({ createdAt: -1 }).lean();
+
+    // Log export
+    await ExportLog.create([{
+      user: userId,
+      exportType: 'buybacks',
+      format: 'csv',
+      store: filters.storeId || null,
+      filters: filters,
+      rowCount: buybacks.length
+    }], { session });
+
+    const headers = [
+      "Buyback ID",
+      "Store ID",
+      "IMEI",
+      "Job Number",
+      "Customer Name",
+      "Customer Phone",
+      "Dealer Name",
+      "Dealer Phone",
+      "Brand",
+      "Model",
+      "Network Type",
+      "Exchange Amount",
+      "Condition Assessed",
+      "Condition",
+      "Negotiated Price",
+      "Status",
+      "Created At",
+    ];
+
+    const rows = buybacks.map((b) => [
+      sanitizeCsvValue(b._id),
+      sanitizeCsvValue(b.store),
+      sanitizeCsvValue(b.imei),
+      sanitizeCsvValue(b.jobNo),
+      sanitizeCsvValue(b.customerName || ""),
+      sanitizeCsvValue(b.customerContactNumber || ""),
+      sanitizeCsvValue(b.dealerName || ""),
+      sanitizeCsvValue(b.dealerContactNumber || ""),
+      sanitizeCsvValue(b.brand || ""),
+      sanitizeCsvValue(b.model || ""),
+      sanitizeCsvValue(b.networkType || ""),
+      sanitizeCsvValue(b.exchangeAmount || ""),
+      sanitizeCsvValue(b.conditionAssessed ? 'Yes' : 'No'),
+      sanitizeCsvValue(b.condition || ""),
+      sanitizeCsvValue(b.negotiatedPrice || ""),
+      sanitizeCsvValue(b.status || ""),
+      sanitizeCsvValue(b.createdAt),
+    ]);
+
+    const csv = [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
+
+    return { csv, rowCount: buybacks.length };
+  });
+}
+
 export async function exportInventoryRows(filters, userId) {
   return await withTransaction(async (session) => {
     const query = {};

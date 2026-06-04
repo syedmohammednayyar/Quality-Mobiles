@@ -14,6 +14,20 @@ const userSchema = new mongoose.Schema({
   roles: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Role' }]
 }, { timestamps: true });
 
+const authSessionSchema = new mongoose.Schema({
+  user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
+  tokenHash: { type: String, required: true, unique: true },
+  familyId: { type: String, required: true, index: true },
+  deviceId: { type: String, index: true },
+  userAgent: String,
+  ipAddress: String,
+  expiresAt: { type: Date, required: true },
+  lastUsedAt: { type: Date, default: Date.now },
+  revokedAt: Date,
+  replacedByTokenHash: String,
+}, { timestamps: true });
+authSessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
 const storeSchema = new mongoose.Schema({
   code: { type: String, required: true, unique: true },
   name: { type: String, required: true, unique: true },
@@ -43,7 +57,7 @@ const customerSchema = new mongoose.Schema({
 
 const productSchema = new mongoose.Schema({
   sku: { type: String, required: true, unique: true, lowercase: true },
-  jobId: { type: String, unique: true, sparse: true, index: true },
+  jobId: { type: String, required: true, unique: true, index: true },
   productCode: { type: String, unique: true, sparse: true, index: true },
   barcode: { type: String, unique: true, sparse: true, index: true },
   imei: { type: String, sparse: true, unique: true },
@@ -51,6 +65,7 @@ const productSchema = new mongoose.Schema({
   name: { type: String, required: true },
   brand: String,
   model: String,
+  networkType: { type: String, enum: ['4G', '5G'], index: true },
   variant: String,
   ram: String,
   storage: String,
@@ -68,14 +83,38 @@ const productSchema = new mongoose.Schema({
   supplierName: String,
   supplierContact: String,
   purchaseDate: Date,
+  store: { type: mongoose.Schema.Types.ObjectId, ref: 'Store', index: true },
+  storeName: String,
   images: [String],
   remarks: String,
   deviceNotes: String,
+  inventoryStatus: { type: String, enum: ["ready", "sold"], default: "ready", index: true },
   inventoryMode: { type: String, enum: ["serialized", "bulk"], default: "bulk", index: true },
   isActive: { type: Boolean, default: true },
   isGift: { type: Boolean, default: false },
   giftCategory: String,
   jobNumber: String,
+  categoryMaster: String,
+  customSubCategory: String,
+  ramVariant: String,
+  storageVariant: String,
+  serialNumber: String,
+  batteryHealth: Number,
+  accessoriesReceived: [String],
+  boxAvailable: { type: Boolean, default: false },
+  chargerAvailable: { type: Boolean, default: false },
+  physicalInspection: mongoose.Schema.Types.Mixed,
+  functionalInspection: mongoose.Schema.Types.Mixed,
+  damageDetection: mongoose.Schema.Types.Mixed,
+  conditionDeduction: { type: Number, default: 0, min: 0 },
+  finalValuation: { type: Number, default: 0, min: 0 },
+  suggestedResalePrice: { type: Number, default: 0, min: 0 },
+  exchangeCreditAmount: { type: Number, default: 0, min: 0 },
+  rackLocation: String,
+  inspectionNotes: String,
+  pricingNotes: String,
+  resaleNotes: String,
+  transferHistory: [mongoose.Schema.Types.Mixed],
   icNumber: String,
   icLocked: { type: Boolean, default: false },
 }, { timestamps: true });
@@ -92,6 +131,11 @@ productSchema.index({
   brand: 'text',
   model: 'text',
 });
+
+// Additional indexes to support new reporting and fast lookups
+productSchema.index({ jobNumber: 1 });
+productSchema.index({ supplierContact: 1 });
+productSchema.index({ category: 1, customSubCategory: 1, categoryMaster: 1 });
 
 const storeInventorySchema = new mongoose.Schema({
   store: { type: mongoose.Schema.Types.ObjectId, ref: 'Store', required: true, unique: true },
@@ -133,7 +177,7 @@ const serializedInventorySchema = new mongoose.Schema({
   store: { type: mongoose.Schema.Types.ObjectId, ref: "Store", required: true, index: true },
   status: {
     type: String,
-    enum: ["in_stock", "reserved", "sold", "transferred", "repair", "buyback_hold"],
+    enum: ["in_stock", "reserved", "sold", "transferred", "buyback_hold"],
     default: "in_stock",
     index: true,
   },
@@ -141,6 +185,9 @@ const serializedInventorySchema = new mongoose.Schema({
   notes: String,
 }, { timestamps: true });
 serializedInventorySchema.index({ store: 1, product: 1, status: 1, createdAt: -1 });
+
+// Ensure serialized inventory job numbers are indexed for quick search
+serializedInventorySchema.index({ jobNumber: 1 });
 
 const bulkInventorySchema = new mongoose.Schema({
   product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
@@ -221,6 +268,15 @@ const buybackSchema = new mongoose.Schema({
   exchangeAmount: { type: Number, default: 0, min: 0 },
   exchangeModel: String,
   condition: { type: String, required: true, enum: ['excellent', 'good', 'fair', 'poor'] },
+  conditionAssessed: { type: Boolean, default: false, index: true },
+  customerName: String,
+  dealerName: String,
+  customerContactNumber: String,
+  dealerContactNumber: String,
+  ramVariant: String,
+  storageVariant: String,
+  payoutMethod: { type: String },
+  serviceReadyStatus: { type: String },
   marketValue: { type: Number, required: true, min: 0 },
   negotiatedPrice: { type: Number, required: true, min: 0 },
   status: { type: String, default: 'pending', enum: ['pending', 'accepted', 'processed', 'rejected'] },
@@ -229,37 +285,8 @@ const buybackSchema = new mongoose.Schema({
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 
-const repairSchema = new mongoose.Schema({
-  ticketNo: { type: String, required: true, unique: true },
-  customerName: { type: String, required: true },
-  customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
-  store: { type: mongoose.Schema.Types.ObjectId, ref: 'Store' },
-  deviceModel: { type: String, required: true },
-  problem: String,
-  technicianName: String,
-  serviceJobId: { type: String, unique: true, sparse: true, index: true },
-  jobNumber: String,
-  inventoryProduct: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
-  status: { 
-    type: String, 
-    default: 'pending', 
-    enum: ['pending', 'in_progress', 'completed', 'delivered', 'cancelled'] 
-  },
-  parts: [mongoose.Schema.Types.Mixed],
-  partsCharge: { type: Number, default: 0, min: 0 },
-  laborCost: { type: Number, default: 0, min: 0 },
-  gotAmount: { type: Number, default: 0, min: 0 },
-  inCash: { type: Number, default: 0, min: 0 },
-  inOnline: { type: Number, default: 0, min: 0 },
-  outCash: { type: Number, default: 0, min: 0 },
-  outOnline: { type: Number, default: 0, min: 0 },
-  paymentStatus: { type: String, default: 'pending', enum: ['pending', 'partial', 'paid'] },
-  outstandingAmount: { type: Number, default: 0, min: 0 },
-  warranty: { type: String, default: '3 months', enum: ['3 months', '6 months', '12 months'] },
-  estimatedCompletion: Date,
-  notes: String,
-  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-}, { timestamps: true });
+// Index jobNo on buybacks and enforce uniqueness (sparse to allow existing nulls)
+buybackSchema.index({ jobNo: 1 }, { unique: true, sparse: true });
 
 const expenseSchema = new mongoose.Schema({
   store: { type: mongoose.Schema.Types.ObjectId, ref: 'Store' },
@@ -282,7 +309,7 @@ const paymentEntrySchema = new mongoose.Schema({
   entryDate: { type: Date, required: true },
   sourceType: { 
     type: String, 
-    enum: ['sale', 'repair', 'buyback', 'expense', 'manual', null] 
+    enum: ['sale', 'buyback', 'expense', 'manual', null] 
   },
   sourceId: mongoose.Schema.Types.ObjectId,
   notes: String,
@@ -357,7 +384,7 @@ storeManagerAssignmentSchema.index({ user: 1, store: 1 }, { unique: true });
 const employeeStoreAssignmentSchema = new mongoose.Schema({
   employee: { type: mongoose.Schema.Types.ObjectId, ref: "Employee", required: true },
   store: { type: mongoose.Schema.Types.ObjectId, ref: "Store", required: true },
-  role: { type: String, required: true, enum: ["manager", "staff"] },
+  role: { type: String, required: true, enum: ["manager", "employee"] },
   assignedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   assignedAt: { type: Date, default: Date.now },
   status: { type: String, required: true, default: "active", enum: ["active", "inactive"] },
@@ -392,7 +419,7 @@ const signupRequestSchema = new mongoose.Schema({
   employeeName: { type: String, required: true },
   email: { type: String, required: true, lowercase: true },
   phone: String,
-  requestedRole: { type: String, required: true, enum: ["manager", "cashier", "inventory_manager"] },
+  requestedRole: { type: String, required: true, enum: ["manager", "employee"] },
   requestedStore: { type: mongoose.Schema.Types.ObjectId, ref: "Store", required: true },
   requestStatus: { type: String, required: true, default: "pending", enum: ["pending", "approved", "rejected"] },
   reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -408,6 +435,7 @@ const sequenceCounterSchema = new mongoose.Schema({
 
 export const Role = mongoose.model('Role', roleSchema);
 export const User = mongoose.model('User', userSchema);
+export const AuthSession = mongoose.model("AuthSession", authSessionSchema);
 export const Store = mongoose.model('Store', storeSchema);
 export const Employee = mongoose.model('Employee', employeeSchema);
 export const Customer = mongoose.model('Customer', customerSchema);
@@ -420,7 +448,6 @@ export const StockLedger = mongoose.model('StockLedger', stockLedgerSchema);
 export const StockMovement = StockLedger;
 export const Sale = mongoose.model('Sale', saleSchema);
 export const Buyback = mongoose.model('Buyback', buybackSchema);
-export const Repair = mongoose.model('Repair', repairSchema);
 export const Expense = mongoose.model('Expense', expenseSchema);
 export const PaymentEntry = mongoose.model('PaymentEntry', paymentEntrySchema);
 export const ChangeRequest = mongoose.model('ChangeRequest', changeRequestSchema);

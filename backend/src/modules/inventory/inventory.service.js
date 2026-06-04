@@ -36,6 +36,7 @@ function mapInventoryItem(store, item, updatedAt) {
     name: product.name,
     brand: product.brand || "",
     model: product.model || "",
+    network_type: product.networkType || "",
     category: product.category,
     variant: product.variant || "",
     ram: product.ram || "",
@@ -58,7 +59,9 @@ function mapInventoryItem(store, item, updatedAt) {
     images: product.images || [],
     remarks: product.remarks || "",
     device_notes: product.deviceNotes || "",
+    inventory_status: quantity <= 0 ? "sold" : (product.inventoryStatus || "ready"),
     inventory_mode: product.inventoryMode || "bulk",
+    active: Boolean(product.isActive),
     updated_at: updatedAt,
   };
 }
@@ -265,60 +268,105 @@ export async function transferStock(input) {
 
   return withTransaction(async (session) => {
     await requireStore(input.fromStoreId);
-    await requireStore(input.toStoreId);
-    await requireProduct(input.productId);
+    const toStoreDoc = await requireStore(input.toStoreId);
+    const productDoc = await requireProduct(input.productId);
+    if (!productDoc.isActive) {
+      throw new HttpError(409, "Inactive products cannot be transferred", "TRANSFER_INACTIVE_PRODUCT");
+    }
+    if (productDoc.inventoryStatus === "sold") {
+      throw new HttpError(409, "Sold products cannot be transferred", "TRANSFER_SOLD_PRODUCT");
+    }
 
     const fromStore = toObjectId(input.fromStoreId, "STORE_INVALID_ID");
     const toStore = toObjectId(input.toStoreId, "STORE_INVALID_ID");
     const product = toObjectId(input.productId, "PRODUCT_INVALID_ID");
 
-    const source = await StoreInventory.findOneAndUpdate(
-      {
-        store: fromStore,
-        items: {
-          $elemMatch: {
-            product,
-            quantity: { $gte: input.quantity },
+    const sourceBulk = await BulkInventory.findOne(
+      { store: fromStore, product, quantity: { $gte: input.quantity } },
+    ).session(session);
+    let sourceLegacy = null;
+
+    if (!sourceBulk) {
+      sourceLegacy = await StoreInventory.findOne(
+        {
+          store: fromStore,
+          items: {
+            $elemMatch: {
+              product,
+              quantity: { $gte: input.quantity },
+            },
           },
         },
-      },
-      {
-        $inc: { "items.$.quantity": -input.quantity },
-        $set: { updatedAt: new Date() },
-      },
-      { session, returnDocument: "after" },
-    );
+      ).session(session);
+    }
 
-    if (!source) {
+    if (!sourceBulk && !sourceLegacy) {
       throw new HttpError(409, "Insufficient stock for transfer", "TRANSFER_INSUFFICIENT_STOCK");
     }
 
-    const destination = await StoreInventory.findOneAndUpdate(
-      { store: toStore, "items.product": product },
+    await BulkInventory.deleteMany({ product, store: { $ne: fromStore } }).session(session);
+
+    const movedBulk = sourceBulk ? await BulkInventory.findOneAndUpdate(
+      { _id: sourceBulk._id },
       {
-        $inc: { "items.$.quantity": input.quantity },
+        $set: {
+          store: toStore,
+          quantity: 1,
+          reservedQuantity: 0,
+          updatedAt: new Date(),
+          ...(input.userId ? { addedBy: input.userId } : {}),
+        },
+      },
+      { session, new: true },
+    ) : null;
+
+    if (!movedBulk) {
+      await BulkInventory.create([{
+        store: toStore,
+        product,
+        quantity: 1,
+        reservedQuantity: 0,
+        minStockLevel: 0,
+        addedBy: input.userId,
+      }], { session });
+    }
+
+    await StoreInventory.updateMany(
+      {},
+      {
+        $pull: { items: { product } },
         $set: { updatedAt: new Date() },
       },
-      { session, returnDocument: "after" },
+      { session },
     );
 
-    if (!destination) {
-      await StoreInventory.findOneAndUpdate(
-        { store: toStore },
-        {
-          $push: {
-            items: {
-              product,
-              quantity: input.quantity,
-              reservedQuantity: 0,
-              minStockLevel: 0,
-            },
+    await StoreInventory.findOneAndUpdate(
+      { store: toStore },
+      {
+        $push: {
+          items: {
+            product,
+            quantity: 1,
+            reservedQuantity: 0,
+            minStockLevel: 0,
           },
-          $set: { updatedAt: new Date() },
         },
-        { upsert: true, session, returnDocument: "after" },
-      );
-    }
+        $set: { updatedAt: new Date() },
+      },
+      { upsert: true, session, returnDocument: "after" },
+    );
+
+    await Product.updateOne(
+      { _id: product },
+      {
+        $set: {
+          store: toStore,
+          storeName: toStoreDoc.name,
+          updatedAt: new Date(),
+        },
+      },
+      { session },
+    );
 
     const referenceId = new mongoose.Types.ObjectId();
     await StockLedger.create([
@@ -355,4 +403,41 @@ export async function transferStock(input) {
       reason: input.reason,
     };
   });
+}
+
+export async function listProductTransferHistory(productId) {
+  assertObjectId(productId, "PRODUCT_INVALID_ID");
+  const product = await Product.findById(toObjectId(productId, "PRODUCT_INVALID_ID")).lean();
+  if (!product) throw new HttpError(404, "Product not found", "PRODUCT_NOT_FOUND");
+
+  const rows = await StockLedger.find({
+    product: product._id,
+    referenceType: "stock_transfer",
+    movementType: "transfer_out",
+  })
+    .populate("store", "name")
+    .populate("createdBy", "fullName username")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const references = rows.map((row) => row.referenceId);
+  const destinations = await StockLedger.find({
+    referenceId: { $in: references },
+    movementType: "transfer_in",
+  }).populate("store", "name").lean();
+  const destinationMap = new Map(destinations.map((row) => [String(row.referenceId), row.store]));
+
+  return rows.map((row) => ({
+    id: String(row.referenceId),
+    product_id: String(product._id),
+    job_number: product.jobId,
+    from_store_id: String(row.store?._id || row.store),
+    from_store_name: row.store?.name || "",
+    to_store_id: String(destinationMap.get(String(row.referenceId))?._id || ""),
+    to_store_name: destinationMap.get(String(row.referenceId))?.name || "",
+    transferred_at: row.createdAt,
+    transferred_by: row.createdBy?.fullName || row.createdBy?.username || "",
+    remarks: row.note || row.reason || "",
+    status: "completed",
+  }));
 }

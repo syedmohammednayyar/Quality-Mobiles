@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { withTransaction } from "../../db/mongodb.js";
 import { Product, Store, StoreInventory, GiftTransaction, StockLedger } from "../../db/models.js";
 import { HttpError } from "../../utils/httpError.js";
@@ -262,6 +263,7 @@ export async function createGiftProduct(input) {
 
     const [product] = await Product.create([{
       sku: input.sku,
+      jobId: `JOB-GIFT-${randomUUID().slice(0, 8).toUpperCase()}`,
       name: input.name,
       category: 'service',
       unitPrice: input.unitPrice,

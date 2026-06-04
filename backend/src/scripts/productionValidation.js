@@ -13,14 +13,12 @@ import {
   StockLedger,
   Sale,
   Buyback,
-  Repair,
   PaymentEntry,
 } from "../db/models.js";
 import { HttpError } from "../utils/httpError.js";
 import { createBuyback } from "../modules/buybacks/buybacks.service.js";
 import { createPaymentEntry } from "../modules/payments/payments.service.js";
 import { createProduct } from "../modules/products/products.service.js";
-import { createRepair, updateRepair } from "../modules/repairs/repairs.service.js";
 import { createSale, updateSale } from "../modules/sales/sales.service.js";
 
 function addCheck(results, name, passed, detail) {
@@ -101,9 +99,9 @@ async function createValidationCustomer(runToken, storeId, created) {
 }
 
 async function createValidationUserEmployee(runToken, storeId, created) {
-  let role = await Role.findOne({ name: "cashier" });
+  let role = await Role.findOne({ name: "employee" });
   if (!role) {
-    role = await Role.create({ name: "cashier", description: "POS operator and sales execution" });
+    role = await Role.create({ name: "employee", description: "Store-linked operational employee" });
   }
 
   const user = await User.create({
@@ -161,7 +159,6 @@ async function cleanup(created) {
   }
 
   await Sale.deleteMany({ _id: { $in: created.saleIds } });
-  await Repair.deleteMany({ _id: { $in: created.repairIds } });
   await Buyback.deleteMany({ _id: { $in: created.buybackIds } });
 
   if (created.productIds.length > 0) {
@@ -203,7 +200,6 @@ async function run() {
     employeeIds: [],
     productIds: [],
     buybackIds: [],
-    repairIds: [],
     saleIds: [],
     paymentEntryIds: [],
   };
@@ -294,69 +290,6 @@ async function run() {
         `quantity=${postSaleQty}`,
       );
     }
-
-    const repair = await createRepair(
-      {
-        ticketNo: `R-${runToken}`,
-        customerName: `Repair Customer ${runToken}`,
-        customer: customerId,
-        storeRef: storeId,
-        deviceModel: "Samsung Test Device",
-        technicianName: "Tech Validation",
-        status: "Completed",
-        partsCharge: 40,
-        laborCost: 60,
-        gotAmount: 20,
-        inCash: 0,
-        inOnline: 0,
-        notes: "Repair validation",
-      },
-      userId,
-    );
-    created.repairIds.push(repair.id);
-
-    addCheck(
-      results,
-      "Flow 2: Repair starts as partial payment",
-      repair.payment_status === "partial",
-      repair.payment_status,
-    );
-
-    const repairPaymentEntry = await createPaymentEntry(
-      {
-        storeRef: storeId,
-        entryType: "in",
-        dealerName: repair.customer_name,
-        cashAmount: 80,
-        onlineAmount: 0,
-        paymentStatus: "paid",
-        outstandingAmount: 0,
-        entryDate: todayIso(),
-        sourceType: "repair",
-        sourceId: repair.id,
-        notes: "Repair settlement",
-      },
-      userId,
-    );
-    created.paymentEntryIds.push(repairPaymentEntry.id);
-
-    const closedRepair = await updateRepair(repair.id, {
-      inCash: 80,
-      status: "Delivered",
-    });
-
-    addCheck(
-      results,
-      "Flow 2: Repair closes as paid",
-      closedRepair.payment_status === "paid",
-      closedRepair.payment_status,
-    );
-    addCheck(
-      results,
-      "Flow 2: Repair can be delivered after payment",
-      closedRepair.status === "Delivered",
-      closedRepair.status,
-    );
 
     const productA = await createProduct({
       sku: `VAL-A-${runToken}`,

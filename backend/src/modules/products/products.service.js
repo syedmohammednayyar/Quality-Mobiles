@@ -55,7 +55,7 @@ async function buildProductIdentity(input) {
 
 async function mapProduct(doc, storeId = null) {
   let stockQuantity = 0;
-  let primaryStoreRef = null;
+  let primaryStoreRef = doc.store ? doc.store.toString() : null;
   let minStockLevel = 0;
 
   if (doc.inventoryMode === "serialized") {
@@ -108,6 +108,7 @@ async function mapProduct(doc, storeId = null) {
     name: doc.name,
     brand: doc.brand || "",
     model: doc.model || "",
+    network_type: doc.networkType || "",
     category: dbCategoryToApi(doc.category),
     description: doc.deviceNotes || "",
     variant: doc.variant || "",
@@ -130,16 +131,18 @@ async function mapProduct(doc, storeId = null) {
     images: doc.images || [],
     remarks: doc.remarks || "",
     device_notes: doc.deviceNotes || "",
+    inventory_status: doc.inventoryStatus || "ready",
     inventory_mode: doc.inventoryMode || "bulk",
     active: Boolean(doc.isActive),
   };
 }
 
 async function requireStore(storeId) {
-  const exists = await Store.exists({ _id: toObjectId(storeId, "STORE_INVALID_ID"), isActive: { $ne: false } });
-  if (!exists) {
+  const store = await Store.findOne({ _id: toObjectId(storeId, "STORE_INVALID_ID"), isActive: { $ne: false } });
+  if (!store) {
     throw new HttpError(404, "Store not found", "STORE_NOT_FOUND");
   }
+  return store;
 }
 
 async function ensureUnique(field, value, code, message, excludeProductId) {
@@ -233,15 +236,22 @@ async function createSerializedEntries(session, product, storeId, entries, userI
 
 export async function listProducts(input = {}) {
   if (input.storeId) {
-    const inventory = await StoreInventory.findOne({ store: toObjectId(input.storeId, "STORE_INVALID_ID") });
-    if (!inventory) return [];
-    const ids = inventory.items.map((item) => item.product);
+    const storeObjectId = toObjectId(input.storeId, "STORE_INVALID_ID");
+    const [bulkRows, serializedRows, inventory] = await Promise.all([
+      BulkInventory.find({ store: storeObjectId, quantity: { $gt: 0 } }).lean(),
+      SerializedInventory.find({ store: storeObjectId, status: "in_stock" }).select("product").lean(),
+      StoreInventory.findOne({ store: storeObjectId }).lean(),
+    ]);
+    const ids = [
+      ...bulkRows.map((item) => item.product),
+      ...serializedRows.map((item) => item.product),
+      ...((inventory?.items || []).filter((item) => Number(item.quantity || 0) > 0).map((item) => item.product)),
+    ];
+    if (ids.length === 0) return [];
     const products = await Product.find({ _id: { $in: ids }, isActive: true }).sort({ createdAt: -1 });
-    const productMap = new Map(products.map((product) => [product._id.toString(), product]));
     const rows = [];
-    for (const item of inventory.items) {
-      const product = productMap.get(item.product.toString());
-      if (product) rows.push(await mapProduct(product, input.storeId));
+    for (const product of products) {
+      rows.push(await mapProduct(product, input.storeId));
     }
     return rows;
   }
@@ -255,7 +265,7 @@ export async function listProducts(input = {}) {
 export async function createProduct(input) {
   const sku = String(input.sku || "").trim();
   const name = String(input.name || "").trim();
-  const stockQuantity = Number(input.stockQuantity || 0);
+  const stockQuantity = 1;
   const primaryStoreRef = input.primaryStoreRef || null;
   const inventoryMode = resolveInventoryMode(input);
   const serializedEntries = Array.isArray(input.serializedEntries) ? input.serializedEntries : [];
@@ -265,8 +275,8 @@ export async function createProduct(input) {
   if (Number(input.price) < 0 || Number(input.purchasePrice || 0) < 0) {
     throw new HttpError(400, "Price must be non-negative", "PRODUCT_INVALID_PRICE");
   }
-  if ((stockQuantity > 0 || serializedEntries.length > 0) && !primaryStoreRef) {
-    throw new HttpError(400, "Primary store is required when stock quantity is greater than zero", "PRODUCT_STORE_REQUIRED_FOR_STOCK");
+  if (!primaryStoreRef) {
+    throw new HttpError(400, "Store assignment is required", "PRODUCT_STORE_REQUIRED_FOR_STOCK");
   }
   if (inventoryMode === "serialized" && serializedEntries.length === 0 && stockQuantity > 0) {
     throw new HttpError(400, "Serialized products require unique device entries instead of manual quantity", "PRODUCT_SERIALIZED_ENTRIES_REQUIRED");
@@ -282,7 +292,7 @@ export async function createProduct(input) {
     };
     await ensureIdentityUnique(normalized);
 
-    if (primaryStoreRef) await requireStore(primaryStoreRef);
+    const primaryStore = primaryStoreRef ? await requireStore(primaryStoreRef) : null;
 
     const [product] = await Product.create([{
       sku: sku.toLowerCase(),
@@ -294,6 +304,7 @@ export async function createProduct(input) {
       name,
       brand: cleanText(input.brand),
       model: cleanText(input.model),
+      networkType: input.networkType,
       variant: cleanText(input.variant),
       ram: cleanText(input.ram),
       storage: cleanText(input.storage),
@@ -307,9 +318,12 @@ export async function createProduct(input) {
       supplierName: cleanText(input.supplierName),
       supplierContact: cleanText(input.supplierContact),
       purchaseDate: input.purchaseDate ? new Date(input.purchaseDate) : undefined,
+      store: primaryStore?._id,
+      storeName: primaryStore?.name,
       images: Array.isArray(input.images) ? input.images.filter(Boolean) : [],
       remarks: cleanText(input.remarks),
       deviceNotes: cleanText(input.deviceNotes || input.description),
+      inventoryStatus: input.inventoryStatus || "ready",
       inventoryMode,
       isActive: input.active ?? true,
     }], { session });
@@ -384,6 +398,7 @@ export async function updateProduct(productId, input) {
     if (input.tax !== undefined) product.taxRate = Number(input.tax || 0);
     if (input.brand !== undefined) product.brand = cleanText(input.brand);
     if (input.model !== undefined) product.model = cleanText(input.model);
+    if (input.networkType !== undefined) product.networkType = input.networkType;
     if (input.variant !== undefined) product.variant = cleanText(input.variant);
     if (input.ram !== undefined) product.ram = cleanText(input.ram);
     if (input.storage !== undefined) product.storage = cleanText(input.storage);
@@ -395,12 +410,21 @@ export async function updateProduct(productId, input) {
     if (input.images !== undefined) product.images = Array.isArray(input.images) ? input.images.filter(Boolean) : [];
     if (input.remarks !== undefined) product.remarks = cleanText(input.remarks);
     if (input.deviceNotes !== undefined || input.description !== undefined) product.deviceNotes = cleanText(input.deviceNotes || input.description);
+    if (input.inventoryStatus !== undefined) product.inventoryStatus = input.inventoryStatus;
     if (input.active !== undefined) product.isActive = input.active;
     if (input.inventoryMode !== undefined) product.inventoryMode = input.inventoryMode;
+    if (input.primaryStoreRef !== undefined && input.primaryStoreRef) {
+      const targetStoreDoc = await requireStore(input.primaryStoreRef);
+      product.store = targetStoreDoc._id;
+      product.storeName = targetStoreDoc.name;
+    }
 
     await product.save({ session });
 
-    const hasInventoryUpdate = input.stockQuantity !== undefined || input.primaryStoreRef !== undefined || input.minStockLevel !== undefined;
+    const hasInventoryUpdate = input.stockQuantity !== undefined
+      || input.primaryStoreRef !== undefined
+      || input.minStockLevel !== undefined
+      || input.inventoryStatus !== undefined;
     let targetStore = input.primaryStoreRef;
     if (!targetStore) {
       const inv = await StoreInventory.findOne({ "items.product": product._id }).session(session);
@@ -413,12 +437,23 @@ export async function updateProduct(productId, input) {
       }
       await requireStore(targetStore);
 
-      if (input.stockQuantity !== undefined) {
+      if (input.stockQuantity !== undefined || input.inventoryStatus !== undefined) {
+        const nextQuantity = input.stockQuantity !== undefined
+          ? Number(input.stockQuantity)
+          : input.inventoryStatus === "sold" ? 0 : 1;
+        await upsertBulkInventory(
+          session,
+          toObjectId(targetStore, "STORE_INVALID_ID"),
+          product._id,
+          nextQuantity,
+          Number(input.minStockLevel || 0),
+          input.userId,
+        );
         await upsertStoreInventory(
           session,
           toObjectId(targetStore, "STORE_INVALID_ID"),
           product._id,
-          Number(input.stockQuantity),
+          nextQuantity,
           Number(input.minStockLevel || 0),
         );
       }

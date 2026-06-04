@@ -23,8 +23,4 @@ employeesRouter.patch(
   authorize("admin", "manager"),
   updateEmployeeHandler,
 );
-employeesRouter.delete(
-  "/:employeeId",
-  authorize("admin"),
-  deleteEmployeeHandler,
-);
+employeesRouter.delete("/:employeeId", authorize("admin"), deleteEmployeeHandler);

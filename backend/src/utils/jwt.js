@@ -40,5 +40,12 @@ export function verifyAccessToken(token) {
 
   const userId = String(rawUserId);
 
-  return { id: userId, userId, username, roles, store_id: storeId };
+  return {
+    id: userId,
+    userId,
+    username,
+    roles,
+    store_id: storeId,
+    sessionId: decoded.sessionId ? String(decoded.sessionId) : null,
+  };
 }

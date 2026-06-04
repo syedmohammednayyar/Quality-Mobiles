@@ -12,6 +12,7 @@ interface HeaderProps {
   stores?: ApiStore[];
   onStoreChange?: (store: ApiStore | { id: string, name: string }) => void;
   onLogout: () => void;
+  onLogoutAll: () => void;
 }
 
 const Header: React.FC<HeaderProps> = ({
@@ -21,6 +22,7 @@ const Header: React.FC<HeaderProps> = ({
   stores = [],
   onStoreChange,
   onLogout,
+  onLogoutAll,
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [showStoreMenu, setShowStoreMenu] = useState(false);
@@ -181,6 +183,9 @@ const Header: React.FC<HeaderProps> = ({
 
             {showUserMenu && (
               <div className="dropdown-menu user-menu">
+                <button className="dropdown-item" onClick={() => { setShowUserMenu(false); onLogoutAll(); }}>
+                  <span>Logout from all devices</span>
+                </button>
                 <button className="dropdown-item text-error" onClick={() => { setShowUserMenu(false); onLogout(); }}>
                   <span>Logout</span>
                 </button>

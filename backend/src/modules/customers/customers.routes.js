@@ -14,21 +14,21 @@ customersRouter.use(authenticate);
 
 customersRouter.get(
   "/",
-  authorize("admin", "manager", "cashier", "inventory_manager"),
+  authorize("admin", "manager", "employee"),
   listCustomersHandler,
 );
 customersRouter.post(
   "/",
-  authorize("admin", "manager", "cashier"),
+  authorize("admin", "manager", "employee"),
   createCustomerHandler,
 );
 customersRouter.patch(
   "/:customerId",
-  authorize("admin", "manager", "cashier"),
+  authorize("admin", "manager", "employee"),
   updateCustomerHandler,
 );
 customersRouter.delete(
   "/:customerId",
-  authorize("admin", "manager", "cashier"),
+  authorize("admin", "manager", "employee"),
   deleteCustomerHandler,
 );

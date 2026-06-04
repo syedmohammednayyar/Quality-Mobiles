@@ -28,7 +28,7 @@ salesRouter.post(
 
 salesRouter.get(
   "/job-lookup/:jobNumber",
-  authorize("admin", "manager", "cashier", "inventory_manager"),
+  authorize("admin", "manager", "employee"),
   lookupSaleJobHandler,
 );
 
@@ -46,6 +46,6 @@ salesRouter.patch(
 
 salesRouter.delete(
   "/:saleId",
-  authorize("admin", "manager", "cashier"),
+  authorize("admin"),
   deleteSaleHandler,
 );

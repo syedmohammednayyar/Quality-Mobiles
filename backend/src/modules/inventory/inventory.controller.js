@@ -7,6 +7,7 @@ import {
   listActiveStores,
   listLowStock,
   listStoreInventory,
+  listProductTransferHistory,
   transferStock,
 } from "./inventory.service.js";
 
@@ -30,7 +31,7 @@ const adjustBodySchema = z.object({
 const inventoryQuerySchema = z.object({
   store_id: objectIdSchema.optional(),
   search: z.string().max(120).optional(),
-  category: z.enum(["new_phone", "used_phone", "accessory", "service", "repair_part"]).optional(),
+  category: z.enum(["new_phone", "used_phone", "accessory", "service"]).optional(),
   stock_status: z.enum(["in_stock", "low_stock", "out_of_stock"]).optional(),
   limit: z.coerce.number().int().positive().optional(),
   offset: z.coerce.number().int().min(0).optional(),
@@ -173,6 +174,17 @@ export async function transferStockHandler(req, res, next) {
     });
 
     res.status(201).json(result);
+  } catch (error) {
+    if (handleZod(error, next)) return;
+    next(error);
+  }
+}
+
+export async function listProductTransferHistoryHandler(req, res, next) {
+  try {
+    const params = z.object({ productId: objectIdSchema }).parse(req.params);
+    const rows = await listProductTransferHistory(params.productId);
+    res.status(200).json({ rows });
   } catch (error) {
     if (handleZod(error, next)) return;
     next(error);

@@ -71,6 +71,30 @@ export async function exportChangeRequestsCSVHandler(req, res, next) {
   }
 }
 
+export async function exportBuybacksCSVHandler(req, res, next) {
+  try {
+    const { storeId, fromDate, toDate } = req.query;
+
+    const result = await exportService.exportBuybacksToCSV(
+      {
+        storeId: storeId ? parseInt(storeId, 10) : undefined,
+        fromDate: fromDate,
+        toDate: toDate,
+      },
+      req.auth.id,
+    );
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="buybacks_export_${Date.now()}.csv"`,
+    );
+    res.send(result.csv);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function getExportHistoryHandler(req, res, next) {
   try {
     const result = await exportService.getExportHistory();

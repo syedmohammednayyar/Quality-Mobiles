@@ -1,4 +1,4 @@
-import { PaymentEntry, Store, Sale, Repair, Customer } from "../../db/models.js";
+import { PaymentEntry, Store, Sale, Customer } from "../../db/models.js";
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
 
@@ -182,7 +182,6 @@ export async function deletePaymentEntry(paymentEntryId) {
 export async function listOutstandingBalances(input = {}) {
   const storeFilter = input.storeId ? { store: input.storeId } : {};
   const sales = await Sale.find({ ...storeFilter, paymentStatus: { $in: ['pending', 'partial'] } }).populate('customer');
-  const repairs = await Repair.find({ ...storeFilter, paymentStatus: { $in: ['pending', 'partial'] } });
 
   const saleOutstandings = sales.map(s => ({
     source_type: 'sale',
@@ -197,18 +196,5 @@ export async function listOutstandingBalances(input = {}) {
     created_at: s.createdAt,
   }));
 
-  const repairOutstandings = repairs.map(r => ({
-    source_type: 'repair',
-    source_id: r._id.toString(),
-    store_ref: r.store ? r.store.toString() : null,
-    party_name: r.customerName,
-    reference_no: r.ticketNo,
-    total_amount: toMoney(r.partsCharge + r.laborCost),
-    paid_amount: toMoney(r.gotAmount + r.inCash + r.inOnline),
-    outstanding_amount: toMoney(r.outstandingAmount),
-    payment_status: r.paymentStatus,
-    created_at: r.createdAt,
-  }));
-
-  return [...saleOutstandings, ...repairOutstandings].sort((a, b) => b.created_at - a.created_at);
+  return saleOutstandings.sort((a, b) => b.created_at - a.created_at);
 }

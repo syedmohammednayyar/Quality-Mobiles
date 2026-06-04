@@ -18,7 +18,7 @@ router.use(authenticate);
 // Create a new change request (any authenticated user)
 router.post(
   "/",
-  authorize("admin", "manager", "cashier"),
+  authorize("admin", "manager", "employee"),
   createChangeRequestHandler,
 );
 

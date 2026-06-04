@@ -9,9 +9,7 @@ import {
 
 const employeeRoleSchema = z.enum([
   "Manager",
-  "Salesman",
-  "Technician",
-  "Staff",
+  "Employee",
 ]);
 const objectIdSchema = z.string().regex(/^[a-f\d]{24}$/i, "Invalid identifier");
 
@@ -24,6 +22,7 @@ const createEmployeeSchema = z.object({
   username: z.string().max(100).optional(),
   password: z.string().min(8).max(120).optional(),
   join_date: z.string().optional().nullable(),
+  active: z.boolean().optional(),
 });
 
 const updateEmployeeSchema = z.object({
@@ -35,6 +34,7 @@ const updateEmployeeSchema = z.object({
   username: z.string().min(1).max(100).optional(),
   password: z.string().min(8).max(120).optional(),
   join_date: z.string().optional().nullable(),
+  active: z.boolean().optional(),
 });
 
 const employeeIdParamsSchema = z.object({
@@ -62,6 +62,7 @@ export async function createEmployeeHandler(req, res, next) {
       username: payload.username,
       password: payload.password,
       joinDate: payload.join_date,
+      active: payload.active,
     }, req.auth);
     res.status(201).json(row);
   } catch (error) {
@@ -93,6 +94,7 @@ export async function updateEmployeeHandler(req, res, next) {
       username: payload.username,
       password: payload.password,
       joinDate: payload.join_date,
+      active: payload.active,
     }, req.auth);
 
     res.status(200).json(row);
@@ -115,18 +117,9 @@ export async function deleteEmployeeHandler(req, res, next) {
   try {
     const params = employeeIdParamsSchema.parse(req.params);
     await deleteEmployee(params.employeeId, req.auth);
-    res.status(204).send();
+    res.status(204).end();
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      next(
-        new HttpError(
-          400,
-          error.issues[0]?.message || "Invalid request",
-          "VALIDATION_ERROR",
-        ),
-      );
-      return;
-    }
     next(error);
   }
 }
+

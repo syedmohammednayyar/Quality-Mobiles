@@ -1,10 +1,10 @@
-import { ChangeRequest, Notification, User, Role, Product, Customer, Buyback, Repair, StoreInventory } from "../../db/models.js";
+import { ChangeRequest, Notification, User, Role, Product, Customer, Buyback, StoreInventory } from "../../db/models.js";
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
 
 export async function createChangeRequest(input) {
   if (
-    !["product", "inventory", "sale", "customer", "buyback", "repair"].includes(
+    !["product", "inventory", "sale", "customer", "buyback"].includes(
       input.entityType,
     )
   ) {
@@ -192,9 +192,6 @@ async function applyChange(request, session) {
       break;
     case "buyback":
       await Buyback.findByIdAndUpdate(entityId, { [fieldName]: newValue }, { session });
-      break;
-    case "repair":
-      await Repair.findByIdAndUpdate(entityId, { [fieldName]: newValue }, { session });
       break;
     case "inventory":
       if (fieldName === "quantity") {

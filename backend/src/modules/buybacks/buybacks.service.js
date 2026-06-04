@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { Buyback, Store, Customer, Product, StoreInventory, StockLedger, PaymentEntry } from "../../db/models.js";
+import { Buyback, Store, Customer, Product, SerializedInventory, StoreInventory, StockLedger, PaymentEntry } from "../../db/models.js";
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
 
@@ -40,15 +40,39 @@ function mapBuyback(doc) {
     brand: doc.brand,
     model: doc.model,
     color: doc.color || "",
+    storage: doc.storageVariant || "",
+    serial_number: doc.serialNumber || "",
+    battery_health: doc.batteryHealth || 0,
+    accessories_received: doc.accessoriesReceived || [],
+    box_available: !!doc.boxAvailable,
+    charger_available: !!doc.chargerAvailable,
+    physical_inspection: doc.physicalInspection || {},
+    functional_inspection: doc.functionalInspection || {},
+    damage_detection: doc.damageDetection || {},
+    condition_deduction: toMoney(doc.conditionDeduction),
+    final_valuation: toMoney(doc.finalValuation),
+    suggested_resale_price: toMoney(doc.suggestedResalePrice),
+    exchange_credit_amount: toMoney(doc.exchangeCreditAmount),
+    rack_location: doc.rackLocation || "",
+    notes: doc.notes || "",
+    inspection_notes: doc.inspectionNotes || "",
+    pricing_notes: doc.pricingNotes || "",
+    resale_notes: doc.resaleNotes || "",
+    transfer_history: doc.transferHistory || [],
     customer: doc.customer ? doc.customer.toString() : null,
     store_ref: doc.store ? doc.store.toString() : null,
     job_no: doc.jobNo || "",
+    customer_name: doc.customerName || "",
+    dealer_name: doc.dealerName || "",
+    customer_contact_number: doc.customerContactNumber || "",
+    dealer_contact_number: doc.dealerContactNumber || "",
     ic_number: doc.icNumber || "",
     cash_amount: toMoney(doc.cashAmount),
     online_amount: toMoney(doc.onlineAmount),
     exchange_amount: toMoney(doc.exchangeAmount),
     exchange_model: doc.exchangeModel || "",
     condition: toApiCondition(doc.condition),
+    condition_assessed: !!doc.conditionAssessed,
     market_value: toMoney(doc.marketValue),
     negotiated_price: toMoney(doc.negotiatedPrice),
     status: toApiStatus(doc.status),
@@ -91,12 +115,22 @@ async function processBuybackIntoInventory(buyback, userId, session) {
       const sku = `USED-${buyback._id.toString().slice(-6).toUpperCase()}`;
       const name = `${buyback.brand} ${buyback.model}`.trim();
 
+      const jobId = buyback.jobNo || `JOB-BB-${buyback._id.toString().slice(-8).toUpperCase()}`;
       const [newProduct] = await Product.create([{
         sku,
+        jobId,
         imei: buyback.imei,
         name,
+        brand: buyback.brand,
+        model: buyback.model,
+        color: buyback.color || "",
+        storage: buyback.storageVariant || "",
+        condition: "used",
         category: 'used_phone',
-        unitPrice: Number(toMoney(buyback.negotiatedPrice)),
+        purchasePrice: Number(toMoney(buyback.negotiatedPrice)),
+        unitPrice: Number(toMoney(buyback.marketValue || buyback.negotiatedPrice)),
+        inventoryStatus: "ready",
+        inventoryMode: "serialized",
         taxRate: 0,
         isActive: true
       }], { session });
@@ -110,6 +144,12 @@ async function processBuybackIntoInventory(buyback, userId, session) {
 
   const storeObjectId = new mongoose.Types.ObjectId(storeId);
   const productObjectId = new mongoose.Types.ObjectId(productId);
+
+  await SerializedInventory.findOneAndUpdate(
+    { product: productObjectId, imei: buyback.imei },
+    { $set: { serialId: `BB-${buyback._id}`, jobNumber: buyback.jobNo || `JOB-BB-${buyback._id.toString().slice(-8).toUpperCase()}`, store: storeObjectId, status: "in_stock", addedBy: userId, notes: "BUYBACK / USED PHONE" } },
+    { upsert: true, session },
+  );
 
   const res = await StoreInventory.findOneAndUpdate(
     { store: storeObjectId, "items.product": productObjectId },
@@ -229,21 +269,44 @@ export async function createBuyback(input, userId) {
       customer: input.customer ? new mongoose.Types.ObjectId(input.customer) : null,
       store: input.storeRef ? new mongoose.Types.ObjectId(input.storeRef) : null,
       jobNo: (input.jobNo || "").trim() || null,
+      customerName: (input.customerName || "").trim() || null,
+      dealerName: (input.dealerName || "").trim() || null,
+      customerContactNumber: (input.customerContactNumber || "").trim() || null,
+      dealerContactNumber: (input.dealerContactNumber || "").trim() || null,
+      ramVariant: (input.ramVariant || input.ram || "").trim() || null,
+      storageVariant: (input.storageVariant || input.storage || "").trim() || null,
+      serialNumber: (input.serial_number || "").trim() || null,
+      batteryHealth: Number(input.battery_health || 0),
+      accessoriesReceived: input.accessories_received || [],
+      boxAvailable: !!input.box_available,
+      chargerAvailable: !!input.charger_available,
+      physicalInspection: input.physical_inspection || {},
+      functionalInspection: input.functional_inspection || {},
+      damageDetection: input.damage_detection || {},
+      conditionDeduction: Number(toMoney(input.condition_deduction)),
+      finalValuation: Number(toMoney(input.final_valuation || input.negotiatedPrice)),
+      suggestedResalePrice: Number(toMoney(input.suggested_resale_price || input.marketValue)),
+      exchangeCreditAmount: Number(toMoney(input.exchange_credit_amount)),
+      rackLocation: (input.rack_location || "").trim() || null,
+      inspectionNotes: (input.inspection_notes || "").trim() || null,
+      pricingNotes: (input.pricing_notes || "").trim() || null,
+      resaleNotes: (input.resale_notes || "").trim() || null,
       icNumber: (input.icNumber || "").trim() || null,
       cashAmount: Number(toMoney(input.cashAmount)),
       onlineAmount: Number(toMoney(input.onlineAmount)),
       exchangeAmount: Number(toMoney(input.exchangeAmount)),
       exchangeModel: (input.exchangeModel || "").trim() || null,
       condition: toDbCondition(input.condition),
+      conditionAssessed: !!input.conditionAssessed,
+      payoutMethod: input.payoutMethod || null,
+      serviceReadyStatus: input.serviceReadyStatus || null,
       marketValue: Number(toMoney(input.marketValue)),
       negotiatedPrice: Number(toMoney(input.negotiatedPrice)),
       status: toDbStatus(input.status || "Pending"),
       createdBy: userId,
     }], { session });
 
-    if (buyback.status === "processed") {
-      await processBuybackIntoInventory(buyback, userId, session);
-    }
+    await processBuybackIntoInventory(buyback, userId, session);
 
     return mapBuyback(buyback);
   });
@@ -257,14 +320,6 @@ export async function updateBuyback(buybackId, input, userId) {
     }
 
     const nextStatus = input.status ? toDbStatus(input.status) : buyback.status;
-
-    if (buyback.status === "processed" && nextStatus !== "processed") {
-      throw new HttpError(
-        409,
-        "Processed buyback cannot move to another status",
-        "BUYBACK_STATUS_LOCKED",
-      );
-    }
 
     const nextStoreId = input.storeRef !== undefined ? (input.storeRef ? new mongoose.Types.ObjectId(input.storeRef) : null) : buyback.store;
     const nextCustomerId = input.customer !== undefined ? (input.customer ? new mongoose.Types.ObjectId(input.customer) : null) : buyback.customer;
@@ -305,11 +360,37 @@ export async function updateBuyback(buybackId, input, userId) {
     buyback.customer = nextCustomerId;
     buyback.store = nextStoreId;
     buyback.jobNo = input.jobNo !== undefined ? (input.jobNo || "").trim() || null : buyback.jobNo;
+    buyback.customerName = input.customerName !== undefined ? (input.customerName || "").trim() || null : buyback.customerName;
+    buyback.dealerName = input.dealerName !== undefined ? (input.dealerName || "").trim() || null : buyback.dealerName;
+    buyback.customerContactNumber = input.customerContactNumber !== undefined ? (input.customerContactNumber || "").trim() || null : buyback.customerContactNumber;
+    buyback.dealerContactNumber = input.dealerContactNumber !== undefined ? (input.dealerContactNumber || "").trim() || null : buyback.dealerContactNumber;
+    buyback.ramVariant = input.ramVariant !== undefined ? (input.ramVariant || input.ram || "").trim() || null : buyback.ramVariant;
+    buyback.storageVariant = input.storageVariant !== undefined ? (input.storageVariant || input.storage || "").trim() || null : buyback.storageVariant;
+    if (input.serial_number !== undefined) buyback.serialNumber = input.serial_number;
+    if (input.battery_health !== undefined) buyback.batteryHealth = input.battery_health;
+    if (input.accessories_received !== undefined) buyback.accessoriesReceived = input.accessories_received;
+    if (input.box_available !== undefined) buyback.boxAvailable = input.box_available;
+    if (input.charger_available !== undefined) buyback.chargerAvailable = input.charger_available;
+    if (input.physical_inspection !== undefined) buyback.physicalInspection = input.physical_inspection;
+    if (input.functional_inspection !== undefined) buyback.functionalInspection = input.functional_inspection;
+    if (input.damage_detection !== undefined) buyback.damageDetection = input.damage_detection;
+    if (input.condition_deduction !== undefined) buyback.conditionDeduction = Number(toMoney(input.condition_deduction));
+    if (input.final_valuation !== undefined) buyback.finalValuation = Number(toMoney(input.final_valuation));
+    if (input.suggested_resale_price !== undefined) buyback.suggestedResalePrice = Number(toMoney(input.suggested_resale_price));
+    if (input.exchange_credit_amount !== undefined) buyback.exchangeCreditAmount = Number(toMoney(input.exchange_credit_amount));
+    if (input.rack_location !== undefined) buyback.rackLocation = input.rack_location;
+    if (input.notes !== undefined) buyback.notes = input.notes;
+    if (input.inspection_notes !== undefined) buyback.inspectionNotes = input.inspection_notes;
+    if (input.pricing_notes !== undefined) buyback.pricingNotes = input.pricing_notes;
+    if (input.resale_notes !== undefined) buyback.resaleNotes = input.resale_notes;
     buyback.icNumber = input.icNumber !== undefined ? (input.icNumber || "").trim() || null : buyback.icNumber;
     buyback.cashAmount = input.cashAmount !== undefined ? Number(toMoney(input.cashAmount)) : buyback.cashAmount;
     buyback.onlineAmount = input.onlineAmount !== undefined ? Number(toMoney(input.onlineAmount)) : buyback.onlineAmount;
     buyback.exchangeAmount = input.exchangeAmount !== undefined ? Number(toMoney(input.exchangeAmount)) : buyback.exchangeAmount;
     buyback.exchangeModel = input.exchangeModel !== undefined ? (input.exchangeModel || "").trim() || null : buyback.exchangeModel;
+    buyback.conditionAssessed = input.conditionAssessed !== undefined ? !!input.conditionAssessed : buyback.conditionAssessed;
+    buyback.payoutMethod = input.payoutMethod !== undefined ? input.payoutMethod : buyback.payoutMethod;
+    buyback.serviceReadyStatus = input.serviceReadyStatus !== undefined ? input.serviceReadyStatus : buyback.serviceReadyStatus;
     buyback.condition = input.condition !== undefined ? toDbCondition(input.condition) : buyback.condition;
     buyback.marketValue = input.marketValue !== undefined ? Number(toMoney(input.marketValue)) : buyback.marketValue;
     buyback.negotiatedPrice = input.negotiatedPrice !== undefined ? Number(toMoney(input.negotiatedPrice)) : buyback.negotiatedPrice;
@@ -317,9 +398,7 @@ export async function updateBuyback(buybackId, input, userId) {
 
     await buyback.save({ session });
 
-    if (oldStatus !== "processed" && buyback.status === "processed") {
-      await processBuybackIntoInventory(buyback, userId, session);
-    }
+    if (!buyback.inventoryProduct) await processBuybackIntoInventory(buyback, userId, session);
 
     return mapBuyback(buyback);
   });

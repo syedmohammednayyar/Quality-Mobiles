@@ -1,16 +1,17 @@
 import mongoose from "mongoose";
+import crypto from "node:crypto";
 import {
   AuditLog,
+  AuthSession,
   Employee,
   EmployeeCredential,
   EmployeeStoreAssignment,
   User,
 } from "../../db/models.js";
+import { env } from "../../config/env.js";
 import { HttpError } from "../../utils/httpError.js";
 import { signAccessToken } from "../../utils/jwt.js";
 import { verifyPassword } from "../../utils/password.js";
-
-const MAX_LOGIN_ATTEMPTS = 5;
 
 async function findAuthRecordByIdentifier(identifier) {
   const normalized = identifier.toLowerCase();
@@ -22,7 +23,7 @@ async function findAuthRecordByIdentifier(identifier) {
 
   if (!user) return null;
 
-  const employee = await Employee.findOne({ user: user._id, isActive: true }).exec();
+  const employee = await Employee.findOne({ user: user._id }).exec();
   const credential = await EmployeeCredential.findOne({ user: user._id }).exec();
   const assignments = employee
     ? await EmployeeStoreAssignment.find({ employee: employee._id, status: "active" }).exec()
@@ -31,35 +32,16 @@ async function findAuthRecordByIdentifier(identifier) {
   return { user, employee, credential, assignments };
 }
 
-function ensureApprovedCredential(credential, { allowWithoutCredential = false } = {}) {
+function ensureProvisionedCredential(credential, { allowWithoutCredential = false } = {}) {
   if (!credential) {
     if (allowWithoutCredential) return;
     throw new HttpError(403, "Credential is not provisioned", "AUTH_CREDENTIAL_NOT_FOUND");
-  }
-  if (credential.accountLocked || credential.status === "locked") {
-    throw new HttpError(423, "Account is locked. Contact admin.", "AUTH_ACCOUNT_LOCKED");
-  }
-  if (credential.approvalStatus !== "approved" || credential.status !== "approved") {
-    if (credential.approvalStatus === "rejected" || credential.status === "rejected") {
-      throw new HttpError(403, credential.rejectedReason || "Signup request rejected", "AUTH_SIGNUP_REJECTED");
-    }
-    if (credential.status === "suspended") {
-      throw new HttpError(403, "Account suspended by administrator", "AUTH_ACCOUNT_SUSPENDED");
-    }
-    if (credential.status === "deactivated") {
-      throw new HttpError(403, "Account deactivated", "AUTH_ACCOUNT_DEACTIVATED");
-    }
-    throw new HttpError(403, "Account pending approval", "AUTH_PENDING_APPROVAL");
   }
 }
 
 async function registerFailedLogin(credential, userId) {
   if (!credential) return;
   credential.loginAttempts = Number(credential.loginAttempts || 0) + 1;
-  if (credential.loginAttempts >= MAX_LOGIN_ATTEMPTS) {
-    credential.accountLocked = true;
-    credential.status = "locked";
-  }
   await credential.save();
   await AuditLog.create({
     user: userId || null,
@@ -76,7 +58,8 @@ async function registerSuccessfulLogin(credential, userId) {
   credential.loginAttempts = 0;
   credential.lastLogin = new Date();
   credential.accountLocked = false;
-  if (credential.status === "locked") credential.status = "approved";
+  credential.status = "approved";
+  credential.approvalStatus = "approved";
   await credential.save();
   await AuditLog.create({
     user: userId || null,
@@ -92,11 +75,51 @@ function pickPrimaryStoreId(assignments, fallbackStoreId) {
   return fallbackStoreId ? String(fallbackStoreId) : null;
 }
 
-export async function login(input) {
+function hashRefreshToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function newRefreshToken() {
+  return crypto.randomBytes(48).toString("base64url");
+}
+
+function refreshExpiry() {
+  return new Date(Date.now() + env.refreshTokenDays * 24 * 60 * 60 * 1000);
+}
+
+function createAccessToken(authUser, sessionId) {
+  return signAccessToken({
+    id: authUser.id,
+    userId: authUser.id,
+    username: authUser.username,
+    roles: authUser.roles,
+    store_id: authUser.store_id,
+    sessionId,
+  });
+}
+
+async function createRefreshSession(userId, metadata = {}, familyId = crypto.randomUUID()) {
+  const refreshToken = newRefreshToken();
+  const session = await AuthSession.create({
+    user: userId,
+    tokenHash: hashRefreshToken(refreshToken),
+    familyId,
+    deviceId: metadata.deviceId || crypto.randomUUID(),
+    userAgent: metadata.userAgent || "",
+    ipAddress: metadata.ipAddress || "",
+    expiresAt: refreshExpiry(),
+  });
+  return { refreshToken, session };
+}
+
+export async function login(input, metadata = {}) {
   const record = await findAuthRecordByIdentifier(input.username);
 
-  if (!record?.user || !record.user.isActive) {
+  if (!record?.user) {
     throw new HttpError(401, "Invalid username or password", "AUTH_INVALID_CREDENTIALS");
+  }
+  if (record.user.isActive === false || record.employee?.isActive === false) {
+    throw new HttpError(403, "Account is inactive", "AUTH_ACCOUNT_INACTIVE");
   }
 
   const credentialPasswordHash = record.credential?.passwordHash || record.user.passwordHash;
@@ -106,7 +129,9 @@ export async function login(input) {
     throw new HttpError(401, "Invalid username or password", "AUTH_INVALID_CREDENTIALS");
   }
 
-  const roles = (record.user.roles || []).map((r) => r.name);
+  const roles = [...new Set((record.user.roles || []).map((r) =>
+    r.name === "cashier" || r.name === "inventory_manager" ? "employee" : r.name
+  ))];
   if (roles.length === 0) {
     throw new HttpError(403, "User has no roles assigned", "AUTH_ROLE_MISSING");
   }
@@ -128,7 +153,7 @@ export async function login(input) {
     record.credential = await EmployeeCredential.findOne({ user: record.user._id }).exec();
   }
 
-  ensureApprovedCredential(record.credential, { allowWithoutCredential: isAdmin && !record.employee });
+  ensureProvisionedCredential(record.credential, { allowWithoutCredential: isAdmin && !record.employee });
 
   const storeId = isAdmin
     ? null
@@ -148,24 +173,25 @@ export async function login(input) {
     store_id: storeId,
   };
 
-  const accessToken = signAccessToken({
-    id: authUser.id,
-    userId: authUser.id,
-    username: authUser.username,
-    roles: authUser.roles,
-    store_id: authUser.store_id,
-  });
+  const { refreshToken, session } = await createRefreshSession(record.user._id, metadata);
+  const accessToken = createAccessToken(authUser, session._id.toString());
 
-  return { accessToken, user: authUser };
+  return { accessToken, refreshToken, refreshExpiresAt: session.expiresAt, user: authUser };
 }
 
 export async function getCurrentUser(userId) {
   const user = await User.findById(userId).populate("roles").exec();
-  if (!user || !user.isActive) {
+  if (!user) {
     throw new HttpError(404, "User not found", "AUTH_USER_NOT_FOUND");
   }
+  if (user.isActive === false) {
+    throw new HttpError(403, "Account is inactive", "AUTH_ACCOUNT_INACTIVE");
+  }
 
-  const employee = await mongoose.model("Employee").findOne({ user: user._id, isActive: true });
+  const employee = await mongoose.model("Employee").findOne({ user: user._id });
+  if (employee?.isActive === false) {
+    throw new HttpError(403, "Account is inactive", "AUTH_ACCOUNT_INACTIVE");
+  }
   const assignments = employee
     ? await EmployeeStoreAssignment.find({ employee: employee._id, status: "active" }).exec()
     : [];
@@ -175,7 +201,61 @@ export async function getCurrentUser(userId) {
     id: user._id.toString(),
     username: user.username,
     email: user.email,
-    roles: user.roles.map((r) => r.name),
+    roles: [...new Set(user.roles.map((r) =>
+      r.name === "cashier" || r.name === "inventory_manager" ? "employee" : r.name
+    ))],
     store_id,
   };
+}
+
+export async function refreshLogin(refreshToken, metadata = {}) {
+  if (!refreshToken) {
+    throw new HttpError(401, "Refresh session required", "AUTH_REFRESH_REQUIRED");
+  }
+
+  const tokenHash = hashRefreshToken(refreshToken);
+  let session = await AuthSession.findOne({ tokenHash }).exec();
+  if (session?.revokedAt && Date.now() - session.revokedAt.getTime() < 30_000) {
+    session = await AuthSession.findOne({
+      familyId: session.familyId,
+      deviceId: session.deviceId,
+      revokedAt: null,
+      expiresAt: { $gt: new Date() },
+    }).sort({ createdAt: -1 }).exec();
+  }
+  if (!session || session.revokedAt || session.expiresAt <= new Date()) {
+    throw new HttpError(401, "Refresh session expired or revoked", "AUTH_REFRESH_INVALID");
+  }
+
+  const authUser = await getCurrentUser(session.user);
+  const replacement = await createRefreshSession(session.user, {
+    ...metadata,
+    deviceId: session.deviceId,
+  }, session.familyId);
+  session.revokedAt = new Date();
+  session.lastUsedAt = new Date();
+  session.replacedByTokenHash = replacement.session.tokenHash;
+  await session.save();
+
+  return {
+    accessToken: createAccessToken(authUser, replacement.session._id.toString()),
+    refreshToken: replacement.refreshToken,
+    refreshExpiresAt: replacement.session.expiresAt,
+    user: authUser,
+  };
+}
+
+export async function revokeRefreshSession(refreshToken) {
+  if (!refreshToken) return;
+  await AuthSession.updateOne(
+    { tokenHash: hashRefreshToken(refreshToken), revokedAt: null },
+    { $set: { revokedAt: new Date() } },
+  );
+}
+
+export async function revokeAllUserSessions(userId) {
+  await AuthSession.updateMany(
+    { user: userId, revokedAt: null },
+    { $set: { revokedAt: new Date() } },
+  );
 }

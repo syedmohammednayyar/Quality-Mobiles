@@ -67,7 +67,12 @@ export const env = {
   port: numberFromEnv("PORT", 4000),
   databaseUrl: databaseUrlFromEnv(),
   jwtAccessSecret: required("JWT_ACCESS_SECRET"),
-  jwtAccessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "15m",
+  jwtAccessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "10h",
+  refreshTokenDays: numberFromEnv("REFRESH_TOKEN_DAYS", 60),
+  refreshCookieName: process.env.REFRESH_COOKIE_NAME || "quality_mobiles_refresh",
+  cookieSecure: process.env.COOKIE_SECURE
+    ? process.env.COOKIE_SECURE === "true"
+    : process.env.NODE_ENV === "production",
   jwtIssuer: required("JWT_ISSUER"),
   jwtAudience: required("JWT_AUDIENCE"),
 };

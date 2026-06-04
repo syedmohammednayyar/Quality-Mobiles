@@ -4,13 +4,11 @@ import { withTransaction } from "../../db/mongodb.js";
 import { hashPassword } from "../../utils/password.js";
 import { HttpError } from "../../utils/httpError.js";
 
-function mapEmployee(doc, salesCount = 0) {
-  let displayRole = "Staff";
+function mapEmployee(doc, salesCount = 0, credential = null) {
+  let displayRole = "Employee";
   if (doc.user && doc.user.roles && doc.user.roles.length > 0) {
     const roles = doc.user.roles.map(r => r.name);
     if (roles.includes("manager")) displayRole = "Manager";
-    else if (roles.includes("inventory_manager")) displayRole = "Technician";
-    else if (roles.includes("cashier")) displayRole = "Salesman";
   }
 
   return {
@@ -22,6 +20,8 @@ function mapEmployee(doc, salesCount = 0) {
     login_username: doc.user ? doc.user.username : "",
     email: doc.user ? (doc.user.email || "") : "",
     phone: doc.phone || "",
+    active: Boolean(doc.isActive && doc.user?.isActive),
+    last_login: credential?.lastLogin || null,
     sales_count: Number(salesCount),
     join_date: doc.hiredAt ? doc.hiredAt.toISOString() : null,
     created_at: doc.createdAt,
@@ -30,8 +30,7 @@ function mapEmployee(doc, salesCount = 0) {
 
 function mapEmployeeRoleToAuthRole(role) {
   if (role === "Manager") return "manager";
-  if (role === "Technician") return "inventory_manager";
-  return "cashier";
+  return "employee";
 }
 
 function buildGeneratedUsername(baseName) {
@@ -79,7 +78,7 @@ async function getManagedStoreIds(auth) {
   if (!isManager(auth)) {
     throw new HttpError(403, "Forbidden", "AUTH_FORBIDDEN");
   }
-  const actorEmployee = await Employee.findOne({ user: auth.userId, isActive: true });
+  const actorEmployee = await Employee.findOne({ user: auth.userId });
   if (!actorEmployee) {
     throw new HttpError(403, "Manager employee profile not found", "EMPLOYEE_NOT_FOUND");
   }
@@ -100,14 +99,11 @@ async function assertStorePermission(auth, storeId) {
 }
 
 async function getRoleId(roleName) {
-  const role = await Role.findOne({ name: roleName });
-  if (!role) {
-    throw new HttpError(
-      500,
-      `Role ${roleName} is not configured`,
-      "ROLE_NOT_CONFIGURED",
-    );
-  }
+  const role = await Role.findOneAndUpdate(
+    { name: roleName },
+    { $setOnInsert: { description: roleName === "employee" ? "Store-linked operational employee" : "Store manager" } },
+    { upsert: true, new: true },
+  );
   return role._id;
 }
 
@@ -124,7 +120,8 @@ async function getEmployeeById(employeeId) {
   }
 
   const salesCount = await Sale.countDocuments({ employee: employeeId });
-  return mapEmployee(employee, salesCount);
+  const credential = await EmployeeCredential.findOne({ employee: employeeId }).lean();
+  return mapEmployee(employee, salesCount, credential);
 }
 
 async function ensureUniqueIdentity({ userId = null, employeeId = null, email, username, phone }) {
@@ -151,7 +148,6 @@ async function ensureUniqueIdentity({ userId = null, employeeId = null, email, u
   if (phone) {
     const existingEmployee = await Employee.findOne({
       phone,
-      isActive: true,
       ...(employeeId ? { _id: { $ne: employeeId } } : {}),
     }).select("_id");
     if (existingEmployee) {
@@ -167,7 +163,7 @@ async function replaceEmployeeRole(user, roleName) {
   // In Mongoose schema, roles is an array. We replace the primary employee role.
   // We'll filter out other standard employee roles first.
   const otherRoles = await Role.find({ 
-    name: { $in: ['manager', 'cashier', 'inventory_manager'] } 
+    name: { $in: ['manager', 'employee', 'cashier', 'inventory_manager'] } 
   });
   const otherRoleIds = otherRoles.map(r => r._id.toString());
   
@@ -176,7 +172,7 @@ async function replaceEmployeeRole(user, roleName) {
 }
 
 export async function listEmployees(auth) {
-  const query = { isActive: true };
+  const query = {};
   if (!isAdmin(auth)) {
     const managed = await getManagedStoreIds(auth);
     query.store = { $in: managed };
@@ -191,9 +187,11 @@ export async function listEmployees(auth) {
     .sort({ createdAt: -1 });
 
   const results = [];
+  const credentials = await EmployeeCredential.find({ employee: { $in: employees.map((employee) => employee._id) } }).lean();
+  const credentialMap = new Map(credentials.map((credential) => [String(credential.employee), credential]));
   for (const emp of employees) {
     const salesCount = await Sale.countDocuments({ employee: emp._id });
-    results.push(mapEmployee(emp, salesCount));
+    results.push(mapEmployee(emp, salesCount, credentialMap.get(String(emp._id))));
   }
   return results;
 }
@@ -242,7 +240,7 @@ export async function createEmployee(input, auth) {
         email,
         fullName: name,
         passwordHash,
-        isActive: true,
+        isActive: input.active ?? true,
         roles: [roleId]
       }], { session });
 
@@ -252,13 +250,13 @@ export async function createEmployee(input, auth) {
         fullName: name,
         phone,
         hiredAt,
-        isActive: true,
+        isActive: input.active ?? true,
       }], { session });
 
       await EmployeeStoreAssignment.create([{
         employee: employee._id,
         store: input.storeRef,
-        role: input.role === "Manager" ? "manager" : "staff",
+        role: input.role === "Manager" ? "manager" : "employee",
         assignedBy: auth.userId,
         assignedAt: new Date(),
         status: "active",
@@ -303,13 +301,17 @@ export async function createEmployee(input, auth) {
 export async function updateEmployee(employeeId, input, auth) {
   return withTransaction(async (session) => {
     const employee = await Employee.findById(employeeId).populate('user');
-    if (!employee || !employee.isActive) {
+    if (!employee) {
       throw new HttpError(404, "Employee not found", "EMPLOYEE_NOT_FOUND");
     }
 
     const user = employee.user;
     const credential = await EmployeeCredential.findOne({ employee: employee._id }).session(session);
     await assertStorePermission(auth, employee.store);
+    const currentRoleNames = await Role.find({ _id: { $in: user.roles } }).select("name").lean();
+    if (isManager(auth) && currentRoleNames.some((role) => role.name === "admin" || role.name === "manager")) {
+      throw new HttpError(403, "Manager cannot edit Admin or Manager accounts", "MANAGER_ACCOUNT_RESTRICTED");
+    }
 
     if (input.storeRef !== undefined) {
       if (!input.storeRef) {
@@ -377,6 +379,10 @@ export async function updateEmployee(employeeId, input, auth) {
       }
       await replaceEmployeeRole(user, input.role);
     }
+    if (input.active !== undefined) {
+      user.isActive = Boolean(input.active);
+      employee.isActive = Boolean(input.active);
+    }
 
     await ensureUniqueIdentity({
       userId: user._id,
@@ -441,7 +447,7 @@ export async function updateEmployee(employeeId, input, auth) {
       { employee: employee._id, store: targetStore },
       {
         $set: {
-          role: (input.role || "").toLowerCase() === "manager" ? "manager" : "staff",
+          role: (input.role || "").toLowerCase() === "manager" ? "manager" : "employee",
           status: "active",
           assignedBy: auth.userId,
           assignedAt: new Date(),
@@ -463,46 +469,25 @@ export async function updateEmployee(employeeId, input, auth) {
 }
 
 export async function deleteEmployee(employeeId, auth) {
-  await withTransaction(async (session) => {
-    if (!isAdmin(auth)) {
-      throw new HttpError(403, "Only admin can remove employees", "AUTH_FORBIDDEN");
-    }
-    const employee = await Employee.findById(employeeId).populate('user');
-    if (!employee) {
-      throw new HttpError(404, "Employee not found", "EMPLOYEE_NOT_FOUND");
-    }
-
+  if (!isAdmin(auth)) {
+    throw new HttpError(403, "Only Admin can delete users", "EMPLOYEE_DELETE_FORBIDDEN");
+  }
+  return withTransaction(async (session) => {
+    const employee = await Employee.findById(employeeId).session(session);
+    if (!employee) throw new HttpError(404, "Employee not found", "EMPLOYEE_NOT_FOUND");
     employee.isActive = false;
     await employee.save({ session });
-
-    if (employee.user) {
-      employee.user.isActive = false;
-      await employee.user.save({ session });
-    }
-
-    await EmployeeCredential.updateOne(
-      { employee: employee._id },
-      {
-        $set: {
-          status: "deactivated",
-          accountLocked: false,
-        },
-      },
-      { session },
-    );
-
-    await EmployeeStoreAssignment.updateMany(
-      { employee: employee._id },
-      { $set: { status: "inactive" } },
-      { session },
-    );
-
+    await User.updateOne({ _id: employee.user }, { $set: { isActive: false } }, { session });
+    await EmployeeStoreAssignment.updateMany({ employee: employee._id }, { $set: { status: "inactive" } }, { session });
     await AuditLog.create([{
       user: auth.userId,
       action: "employee.deleted",
       entityType: "employee",
       entityId: employee._id.toString(),
       status: "success",
+      notes: "Soft deleted",
     }], { session });
+    return { id: employeeId };
   });
 }
+

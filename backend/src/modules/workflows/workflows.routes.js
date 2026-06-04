@@ -224,6 +224,17 @@ router.get(
 );
 
 /**
+ * Export buybacks to CSV
+ * GET /api/v1/workflows/exports/buybacks/csv?storeId=1&fromDate=2026-04-01&toDate=2026-04-25
+ */
+router.get(
+  "/exports/buybacks/csv",
+  authenticate,
+  authorize("manager", "admin"),
+  exportController.exportBuybacksCSVHandler,
+);
+
+/**
  * Export inventory to PDF
  * GET /api/v1/workflows/exports/inventory/pdf?storeId=1
  */

@@ -5,5 +5,5 @@ import { exportAdminPdfHandler, getAdminOverviewHandler } from "./reports.contro
 
 export const reportsRouter = Router();
 reportsRouter.use(authenticate);
-reportsRouter.get("/admin/overview", authorize("admin"), getAdminOverviewHandler);
-reportsRouter.get("/admin/export/pdf", authorize("admin"), exportAdminPdfHandler);
+reportsRouter.get("/admin/overview", authorize("admin", "manager"), getAdminOverviewHandler);
+reportsRouter.get("/admin/export/pdf", authorize("admin", "manager"), exportAdminPdfHandler);

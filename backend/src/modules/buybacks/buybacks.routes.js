@@ -14,12 +14,12 @@ buybacksRouter.use(authenticate);
 
 buybacksRouter.get(
   "/",
-  authorize("admin", "manager", "inventory_manager"),
+  authorize("admin", "manager", "employee"),
   listBuybacksHandler,
 );
 buybacksRouter.post(
   "/",
-  authorize("admin", "manager"),
+  authorize("admin", "manager", "employee"),
   createBuybackHandler,
 );
 buybacksRouter.patch(

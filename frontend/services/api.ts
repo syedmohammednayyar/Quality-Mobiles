@@ -3,6 +3,8 @@ export interface ApiCustomer {
   name: string;
   email: string;
   phone: string;
+  active?: boolean;
+  last_login?: string | null;
   store_ref?: string | null;
   created_at: string;
 }
@@ -20,7 +22,7 @@ export interface ApiStore {
 export interface ApiEmployee {
   id: string;
   name: string;
-  role: "Manager" | "Salesman" | "Technician" | "Staff";
+  role: "Manager" | "Employee";
   store: string;
   store_ref?: string | null;
   login_username?: string;
@@ -42,6 +44,7 @@ export interface ApiProduct {
   name: string;
   brand?: string;
   model?: string;
+  network_type?: "4G" | "5G" | "";
   category?: "new_phone" | "used_phone" | "accessories" | "services";
   description: string;
   variant?: string;
@@ -81,6 +84,7 @@ export interface ApiStoreInventoryRow {
   name: string;
   brand?: string;
   model?: string;
+  network_type?: "4G" | "5G" | "";
   category: string;
   variant?: string;
   ram?: string;
@@ -103,6 +107,8 @@ export interface ApiStoreInventoryRow {
   images?: string[];
   remarks?: string;
   device_notes?: string;
+  inventory_status?: "ready" | "repair" | "sold";
+  active?: boolean;
   updated_at: string;
 }
 
@@ -116,6 +122,7 @@ export interface CreateProductPayload {
   name: string;
   brand?: string;
   model?: string;
+  network_type?: "4G" | "5G" | "";
   category: "new_phone" | "used_phone" | "accessories" | "services";
   description?: string;
   variant?: string;
@@ -128,6 +135,7 @@ export interface CreateProductPayload {
   selling_price?: string;
   discount?: string;
   tax?: string;
+  inventory_status?: "ready" | "repair" | "sold";
   inventory_mode?: "serialized" | "bulk";
   stock_quantity: number;
   min_stock_level?: number;
@@ -151,6 +159,10 @@ export interface ApiSaleItem {
   quantity: number;
   unit_price: string;
   line_total?: string;
+  job_no?: string;
+  product_name?: string;
+  brand?: string;
+  imei?: string;
 }
 
 export interface ApiSale {
@@ -175,6 +187,12 @@ export interface ApiSale {
   items: ApiSaleItem[];
   total_amount: string;
   payment_status?: "pending" | "partial" | "paid";
+  sale_no?: string;
+  customer_name?: string;
+  store_name?: string;
+  employee_name?: string;
+  payment_method?: string;
+  sale_status?: "completed" | "draft" | "cancelled";
 }
 
 export type BuybackWorkflowStatus =
@@ -383,7 +401,7 @@ export interface AuthUser {
   id: string;
   name: string;
   email: string;
-  role: "Admin" | "Manager" | "Sales" | "Staff" | "Salesman" | "Technician";
+  role: "Admin" | "Manager" | "Employee";
   assignedStoreId?: string;
   createdAt: string;
 }
@@ -410,6 +428,7 @@ export interface CreateSalePayload {
   customer_source?: "walk_in" | "referred";
   referred_by_employee_id?: string | null;
   referral_notes?: string;
+  payment_method?: "cash" | "card" | "bank_transfer" | "upi";
   notes: string;
   items: ApiSaleItem[];
 }
@@ -427,6 +446,7 @@ export interface JobLookupResponse {
 export interface CreateBuybackPayload {
   imei: string;
   serial_number?: string;
+  job_no?: string;
   customer: string;
   store_ref: string;
   assigned_store_ref?: string;
@@ -512,7 +532,7 @@ export interface CreatePaymentEntryPayload {
 
 export interface CreateEmployeePayload {
   name: string;
-  role: "Manager" | "Salesman" | "Technician" | "Staff";
+  role: "Manager" | "Employee";
   store: string;
   store_ref?: string | null;
   email: string;
@@ -521,6 +541,7 @@ export interface CreateEmployeePayload {
   password?: string;
   sales_count?: number;
   join_date?: string | null;
+  active?: boolean;
 }
 
 export interface CreateStorePayload {
@@ -585,39 +606,6 @@ export interface ReportDataResponse {
   rows: ReportRow[];
 }
 
-export interface ApiSignupRequest {
-  id: string;
-  employee_id: string | null;
-  employee_name: string;
-  email: string;
-  phone: string;
-  requested_role: string;
-  requested_store_ref: string | null;
-  requested_store_name: string;
-  request_status: "pending" | "approved" | "rejected";
-  reviewed_by: string | null;
-  reviewed_at: string | null;
-  rejection_reason: string;
-  created_at: string;
-}
-
-export interface ApiCredentialAccount {
-  id: string;
-  employee_id: string | null;
-  employee_name: string;
-  email: string;
-  status: "pending" | "approved" | "rejected" | "suspended" | "deactivated" | "locked";
-  approval_status: "pending" | "approved" | "rejected";
-  account_locked: boolean;
-  login_attempts: number;
-  last_login: string | null;
-  approved_by: string | null;
-  approved_at: string | null;
-  rejected_reason: string;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface AdminOverviewFilters {
   quickRange?: "today" | "yesterday" | "this_week" | "this_month" | "last_month" | "custom";
   fromDate?: string;
@@ -653,6 +641,9 @@ export interface AdminOverviewResponse {
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "/api/v1").replace(/\/$/, "");
 const TOKEN_KEY = "quality-mobiles-token";
 const USER_KEY = "quality-mobiles-user";
+const REFRESH_EXPIRY_KEY = "quality-mobiles-refresh-expiry";
+const DEVICE_KEY = "quality-mobiles-device-id";
+let refreshPromise: Promise<boolean> | null = null;
 
 type BackendAuthUser = {
   id: string;
@@ -690,6 +681,7 @@ type BackendInventoryRow = {
 type BackendSale = {
   id: string;
   sale_no: string;
+  saleNo?: string;
   store_id: string;
   customer_id: string | null;
   employee_id: string;
@@ -697,9 +689,12 @@ type BackendSale = {
   tax_total: string;
   discount_total: string;
   exchange_total: string;
+  exchangeTotal?: string | number;
   grand_total: string;
+  grandTotal?: string | number;
   amount_paid: string;
   payment_status: "pending" | "partial" | "paid";
+  paymentStatus?: "pending" | "partial" | "paid";
   note?: string | null;
   jobNumber?: string | null;
   job_number?: string | null;
@@ -723,9 +718,12 @@ type BackendSaleItem = {
   id: string;
   sale_id: string;
   product_id: string;
+  product?: string;
   quantity: number;
   unit_price: string;
+  unitPrice?: string | number;
   line_total: string;
+  lineTotal?: string | number;
 };
 
 type BackendPayment = {
@@ -783,7 +781,7 @@ function toNumber(value: number | string | null | undefined): number {
 
 function sessionGet(key: string): string | null {
   try {
-    return window.sessionStorage.getItem(key);
+    return window.localStorage.getItem(key) || window.sessionStorage.getItem(key);
   } catch {
     return null;
   }
@@ -791,7 +789,8 @@ function sessionGet(key: string): string | null {
 
 function sessionSet(key: string, value: string): void {
   try {
-    window.sessionStorage.setItem(key, value);
+    window.localStorage.setItem(key, value);
+    window.sessionStorage.removeItem(key);
   } catch {
     // Ignore storage write failures in restricted browser contexts.
   }
@@ -799,6 +798,7 @@ function sessionSet(key: string, value: string): void {
 
 function sessionRemove(key: string): void {
   try {
+    window.localStorage.removeItem(key);
     window.sessionStorage.removeItem(key);
   } catch {
     // Ignore storage removal failures in restricted browser contexts.
@@ -808,9 +808,65 @@ function sessionRemove(key: string): void {
 function mapBackendRole(roles: string[]): AuthUser["role"] {
   const normalized = roles.map((role) => role.toLowerCase());
   if (normalized.includes("admin")) return "Admin";
-  if (normalized.includes("manager") || normalized.includes("inventory_manager")) return "Manager";
-  if (normalized.includes("cashier")) return "Sales";
-  return "Staff";
+  if (normalized.includes("manager")) return "Manager";
+  if (normalized.includes("employee") || normalized.includes("cashier") || normalized.includes("inventory_manager")) return "Employee";
+  return "Employee";
+}
+
+export interface DashboardSummary {
+  kpis: Record<string, number>;
+  salesOverview: Record<"today" | "week" | "month", { sales: number; revenue: number; productsSold: number }>;
+  inventory: { newPhones: number; usedPhones: number; lowStock: number; recentlyAdded: number; recentlyTransferred: number };
+  storePerformance: Array<{ store: string; revenue: number; sales: number; inventoryValue: number }>;
+  trend: Array<{ date: string; revenue: number; sales: number }>;
+  recentSales: Array<{ id: string; jobNumber: string; product: string; customer: string; store: string; amount: number; time: string }>;
+  activity: Array<{ activity: string; detail: string; user: string; time: string }>;
+  alerts: Array<{ type: string; count: number; action: string }>;
+}
+
+function getDeviceId(): string {
+  const existing = sessionGet(DEVICE_KEY);
+  if (existing) return existing;
+  const id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+  sessionSet(DEVICE_KEY, id);
+  return id;
+}
+
+function notifySessionWarning(): void {
+  window.dispatchEvent(new CustomEvent("auth:session-warning"));
+}
+
+async function renewSession(silent = false): Promise<boolean> {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = (async () => {
+    try {
+      const response = await fetch(`${API_BASE}/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "X-Device-Id": getDeviceId() },
+      });
+      if (!response.ok) {
+        if (!silent) notifySessionWarning();
+        return false;
+      }
+      const result = await response.json() as {
+        accessToken: string;
+        refreshExpiresAt?: string;
+        user: BackendAuthUser;
+      };
+      setAuthToken(result.accessToken);
+      setSessionUser(mapAuthUser(result.user));
+      if (result.refreshExpiresAt) sessionSet(REFRESH_EXPIRY_KEY, result.refreshExpiresAt);
+      window.dispatchEvent(new CustomEvent("auth:session-renewed"));
+      return true;
+    } catch {
+      if (!silent) notifySessionWarning();
+      return false;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+  return refreshPromise;
 }
 
 function mapAuthUser(user: BackendAuthUser): AuthUser {
@@ -888,7 +944,7 @@ function resolveStoreFilter(store: string | undefined, stores: ApiStore[]): stri
   return match ? match.id : null;
 }
 
-async function apiRequest<T>(path: string, options: RequestInit = {}, requiresAuth = true): Promise<T> {
+async function apiRequest<T>(path: string, options: RequestInit = {}, requiresAuth = true, retried = false): Promise<T> {
   const headers = new Headers(options.headers || {});
   const bodyIsFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
 
@@ -906,6 +962,7 @@ async function apiRequest<T>(path: string, options: RequestInit = {}, requiresAu
   const response = await fetch(`${API_BASE}${ensureAbsolutePath(path)}`, {
     ...options,
     headers,
+    credentials: "include",
   });
 
   const contentType = response.headers.get("content-type") || "";
@@ -918,9 +975,8 @@ async function apiRequest<T>(path: string, options: RequestInit = {}, requiresAu
   }
 
   if (!response.ok) {
-    if (response.status === 401) {
-      clearAuthToken();
-      clearSessionUser();
+    if (response.status === 401 && requiresAuth && !retried && await renewSession()) {
+      return apiRequest<T>(path, options, requiresAuth, true);
     }
 
     const errorPayload = payload as { error?: { message?: string; code?: string }; message?: string; detail?: string } | null;
@@ -961,7 +1017,7 @@ function inventoryRowToProduct(row: ApiStoreInventoryRow): ApiProduct {
     discount: toMoney(row.discount),
     tax: toMoney(row.tax),
     final_price: toMoney(row.final_price || row.unit_price),
-    stock_quantity: row.quantity,
+    stock_quantity: Number(row.quantity || 0),
     min_stock_level: row.min_stock_level,
     primary_store_ref: row.store_id,
     supplier_name: row.supplier_name,
@@ -992,11 +1048,11 @@ function mapSaleDetailToApiSale(detail: BackendSaleDetailResponse): ApiSale {
     id: String(detail.sale.id),
     customer: detail.sale.customer_id ? String(detail.sale.customer_id) : null,
     store_ref: String(detail.sale.store_id),
-    job_no: detail.sale.jobNumber || detail.sale.job_number || detail.sale.sale_no,
+    job_no: detail.sale.jobNumber || detail.sale.job_number || detail.sale.sale_no || detail.sale.saleNo,
     ic_number: detail.sale.icNumber || detail.sale.ic_number || "",
     cash_amount: toMoney(cashAmount),
     online_amount: toMoney(onlineAmount),
-    exchange_amount: toMoney(detail.sale.exchange_total),
+    exchange_amount: toMoney(detail.sale.exchange_total ?? detail.sale.exchangeTotal),
     exchange_model: detail.sale.exchangeModel || "",
     got_amount: toMoney(detail.sale.gotAmount || detail.sale.amount_paid),
     gift: detail.sale.gift || "",
@@ -1009,13 +1065,13 @@ function mapSaleDetailToApiSale(detail: BackendSaleDetailResponse): ApiSale {
     notes: detail.sale.note || "",
     items: detail.items.map((item) => ({
       id: String(item.id),
-      product: String(item.product_id),
+      product: String(item.product_id ?? item.product),
       quantity: item.quantity,
-      unit_price: toMoney(item.unit_price),
-      line_total: toMoney(item.line_total),
+      unit_price: toMoney(item.unit_price ?? item.unitPrice),
+      line_total: toMoney(item.line_total ?? item.lineTotal),
     })),
-    total_amount: toMoney(detail.sale.grand_total),
-    payment_status: detail.sale.payment_status,
+    total_amount: toMoney(detail.sale.grand_total ?? detail.sale.grandTotal),
+    payment_status: detail.sale.payment_status || detail.sale.paymentStatus,
   };
 }
 
@@ -1030,7 +1086,7 @@ function buildPayments(payload: CreateSalePayload): Array<{ paymentMethod: Payme
   }
 
   if (onlineAmount > 0) {
-    payments.push({ paymentMethod: "bank_transfer", amount: onlineAmount });
+    payments.push({ paymentMethod: payload.payment_method || "bank_transfer", amount: onlineAmount });
   }
 
   return payments;
@@ -1070,15 +1126,24 @@ export function clearSessionUser(): void {
   sessionRemove(USER_KEY);
 }
 
+export async function refreshSession(silent = false): Promise<boolean> {
+  return renewSession(silent);
+}
+
 export async function login(payload: { username: string; password: string }): Promise<LoginResponse> {
-  const result = await apiRequest<{ accessToken: string; user: BackendAuthUser }>("/auth/login", {
+  const result = await apiRequest<{ accessToken: string; refreshExpiresAt?: string; user: BackendAuthUser }>("/auth/login", {
     method: "POST",
+    headers: { "X-Device-Id": getDeviceId() },
     body: JSON.stringify(payload),
   }, false);
+  setAuthToken(result.accessToken);
+  const user = mapAuthUser(result.user);
+  setSessionUser(user);
+  if (result.refreshExpiresAt) sessionSet(REFRESH_EXPIRY_KEY, result.refreshExpiresAt);
 
   return {
     token: result.accessToken,
-    user: mapAuthUser(result.user),
+    user,
   };
 }
 
@@ -1088,9 +1153,23 @@ export async function getCurrentUser(): Promise<AuthUser> {
 }
 
 export async function logout(): Promise<{ detail: string }> {
-  clearAuthToken();
-  clearSessionUser();
-  return { detail: "Logged out." };
+  try {
+    return await apiRequest<{ detail: string }>("/auth/logout", { method: "POST" }, false);
+  } finally {
+    clearAuthToken();
+    clearSessionUser();
+    sessionRemove(REFRESH_EXPIRY_KEY);
+  }
+}
+
+export async function logoutAllDevices(): Promise<{ detail: string }> {
+  try {
+    return await apiRequest<{ detail: string }>("/auth/logout-all", { method: "POST" });
+  } finally {
+    clearAuthToken();
+    clearSessionUser();
+    sessionRemove(REFRESH_EXPIRY_KEY);
+  }
 }
 
 export async function listStores(): Promise<ApiStore[]> {
@@ -1221,6 +1300,7 @@ export async function createEmployee(payload: CreateEmployeePayload): Promise<Ap
       username: payload.username,
       password: payload.password,
       join_date: payload.join_date,
+      active: payload.active ?? true,
     }),
   });
 
@@ -1243,6 +1323,7 @@ export async function updateEmployee(id: string, payload: Partial<CreateEmployee
       ...(payload.username !== undefined ? { username: payload.username } : {}),
       ...(payload.password !== undefined ? { password: payload.password } : {}),
       ...(payload.join_date !== undefined ? { join_date: payload.join_date } : {}),
+      ...(payload.active !== undefined ? { active: payload.active } : {}),
     }),
   });
 
@@ -1255,30 +1336,6 @@ export async function updateEmployee(id: string, payload: Partial<CreateEmployee
 
 export async function deleteEmployee(id: string): Promise<void> {
   await apiRequest<void>(`/employees/${id}`, { method: "DELETE" });
-}
-
-export async function listCredentialAccounts(params: { status?: string; approval_status?: string } = {}): Promise<ApiCredentialAccount[]> {
-  const query = new URLSearchParams();
-  if (params.status) query.set("status", params.status);
-  if (params.approval_status) query.set("approval_status", params.approval_status);
-  const result = await apiRequest<{ rows: ApiCredentialAccount[] }>(`/employee-access/credentials${query.toString() ? `?${query.toString()}` : ""}`);
-  return result.rows.map((row) => ({
-    ...row,
-    id: String(row.id),
-    employee_id: row.employee_id ? String(row.employee_id) : null,
-  }));
-}
-
-export async function updateCredentialStatus(employeeId: string, status: ApiCredentialAccount["status"]): Promise<ApiCredentialAccount> {
-  const row = await apiRequest<ApiCredentialAccount>(`/employee-access/credentials/${employeeId}/status`, {
-    method: "PATCH",
-    body: JSON.stringify({ status }),
-  });
-  return {
-    ...row,
-    id: String(row.id),
-    employee_id: row.employee_id ? String(row.employee_id) : null,
-  };
 }
 
 export async function resetCredentialPassword(employeeId: string, password: string): Promise<void> {
@@ -1322,14 +1379,14 @@ export async function listProducts(storeId?: string): Promise<ApiProduct[]> {
           category: normalizeProductCategory(row.category),
           description: "",
           price: toMoney(row.unit_price),
-          stock_quantity: row.quantity,
+          stock_quantity: Number(row.quantity || 0),
           primary_store_ref: activeStoreId,
           active: true,
         });
         return;
       }
 
-      existing.stock_quantity += row.quantity;
+      existing.stock_quantity += Number(row.quantity || 0);
     });
   });
 
@@ -1347,9 +1404,10 @@ export async function createProduct(_payload: CreateProductPayload): Promise<Api
       imei: _payload.imei,
       serial_number: _payload.serial_number,
       name: _payload.name,
-      brand: _payload.brand,
-      model: _payload.model,
-      category: apiCategoryToBackend(_payload.category),
+        brand: _payload.brand,
+        model: _payload.model,
+        network_type: _payload.network_type,
+        category: apiCategoryToBackend(_payload.category),
       description: _payload.description || "",
       variant: _payload.variant,
       ram: _payload.ram,
@@ -1360,8 +1418,9 @@ export async function createProduct(_payload: CreateProductPayload): Promise<Api
       price: toNumber(_payload.price),
       selling_price: _payload.selling_price !== undefined ? toNumber(_payload.selling_price) : undefined,
       discount: toNumber(_payload.discount),
-      tax: toNumber(_payload.tax),
-      inventory_mode: _payload.inventory_mode,
+        tax: toNumber(_payload.tax),
+        inventory_status: _payload.inventory_status,
+        inventory_mode: _payload.inventory_mode,
       stock_quantity: Number(_payload.stock_quantity || 0),
       min_stock_level: Number(_payload.min_stock_level || 0),
       serialized_entries: _payload.serialized_entries,
@@ -1387,8 +1446,9 @@ export async function updateProduct(_id: string, _payload: Partial<CreateProduct
     ...(_payload.imei !== undefined ? { imei: _payload.imei } : {}),
     ...(_payload.serial_number !== undefined ? { serial_number: _payload.serial_number } : {}),
     ...(_payload.name !== undefined ? { name: _payload.name } : {}),
-    ...(_payload.brand !== undefined ? { brand: _payload.brand } : {}),
-    ...(_payload.model !== undefined ? { model: _payload.model } : {}),
+      ...(_payload.brand !== undefined ? { brand: _payload.brand } : {}),
+      ...(_payload.model !== undefined ? { model: _payload.model } : {}),
+      ...(_payload.network_type !== undefined ? { network_type: _payload.network_type } : {}),
     ...(_payload.category !== undefined ? { category: apiCategoryToBackend(_payload.category) } : {}),
     ...(_payload.description !== undefined ? { description: _payload.description } : {}),
     ...(_payload.variant !== undefined ? { variant: _payload.variant } : {}),
@@ -1401,6 +1461,7 @@ export async function updateProduct(_id: string, _payload: Partial<CreateProduct
     ...(_payload.selling_price !== undefined ? { selling_price: toNumber(_payload.selling_price) } : {}),
     ...(_payload.discount !== undefined ? { discount: toNumber(_payload.discount) } : {}),
     ...(_payload.tax !== undefined ? { tax: toNumber(_payload.tax) } : {}),
+    ...(_payload.inventory_status !== undefined ? { inventory_status: _payload.inventory_status } : {}),
     ...(_payload.inventory_mode !== undefined ? { inventory_mode: _payload.inventory_mode } : {}),
     ...(_payload.stock_quantity !== undefined ? { stock_quantity: Number(_payload.stock_quantity) } : {}),
     ...(_payload.min_stock_level !== undefined ? { min_stock_level: Number(_payload.min_stock_level) } : {}),
@@ -1453,6 +1514,25 @@ export async function transferInventoryStock(payload: {
   });
 }
 
+export interface ApiProductTransferHistory {
+  id: string;
+  product_id: string;
+  job_number: string;
+  from_store_id: string;
+  from_store_name: string;
+  to_store_id: string;
+  to_store_name: string;
+  transferred_at: string;
+  transferred_by: string;
+  remarks: string;
+  status: "completed";
+}
+
+export async function listProductTransferHistory(productId: string): Promise<ApiProductTransferHistory[]> {
+  const result = await apiRequest<{ rows: ApiProductTransferHistory[] }>(`/inventory/products/${productId}/transfers`);
+  return result.rows;
+}
+
 export async function exportInventoryPdf(storeId?: string): Promise<Blob> {
   const token = getAuthToken();
   const headers = new Headers();
@@ -1469,18 +1549,8 @@ export async function exportInventoryPdf(storeId?: string): Promise<Blob> {
 }
 
 export async function listSales(): Promise<ApiSale[]> {
-  const response = await apiRequest<{ rows: BackendSaleListRow[] }>("/sales");
-  const details = await Promise.all(
-    response.rows.map(async (row) => {
-      try {
-        return await fetchSaleByIdRaw(String(row.id));
-      } catch {
-        return null;
-      }
-    })
-  );
-
-  return details.filter((entry): entry is BackendSaleDetailResponse => entry !== null).map(mapSaleDetailToApiSale);
+  const response = await apiRequest<{ rows: ApiSale[] }>("/sales");
+  return response.rows;
 }
 
 export async function createSale(payload: CreateSalePayload): Promise<ApiSale> {
@@ -1619,6 +1689,7 @@ function toBuybackPayload(payload: Partial<CreateBuybackPayload> & { status?: Bu
   return {
     ...(payload.imei !== undefined ? { imei: payload.imei } : {}),
     ...(payload.serial_number !== undefined ? { serial_number: payload.serial_number } : {}),
+    ...(payload.job_no !== undefined ? { job_no: payload.job_no } : {}),
     ...(payload.customer !== undefined ? { customer: payload.customer } : {}),
     ...(payload.store_ref !== undefined ? { store_ref: payload.store_ref } : {}),
     ...(payload.assigned_store_ref !== undefined ? { assigned_store_ref: payload.assigned_store_ref } : {}),
@@ -1699,67 +1770,6 @@ export async function updateBuyback(id: string, payload: Partial<CreateBuybackPa
 
 export async function deleteBuyback(id: string): Promise<void> {
   await apiRequest<void>(`/buybacks/${id}`, { method: "DELETE" });
-}
-
-export async function listRepairs(): Promise<ApiRepairTicket[]> {
-  const result = await apiRequest<{ rows: ApiRepairTicket[] }>("/repairs");
-  return result.rows.map((entry) => ({
-    ...entry,
-    id: String(entry.id),
-    customer: entry.customer === null || entry.customer === undefined ? null : String(entry.customer),
-    store_ref: entry.store_ref === null || entry.store_ref === undefined ? null : String(entry.store_ref),
-    parts: entry.parts || [],
-  }));
-}
-
-export async function createRepair(payload: CreateRepairPayload): Promise<ApiRepairTicket> {
-  const row = await apiRequest<ApiRepairTicket>("/repairs", {
-    method: "POST",
-    body: JSON.stringify({
-      ...payload,
-      parts_charge: toNumber(payload.parts_charge),
-      labor_cost: toNumber(payload.labor_cost),
-      got_amount: toNumber(payload.got_amount),
-      in_cash: toNumber(payload.in_cash),
-      in_online: toNumber(payload.in_online),
-      out_cash: toNumber(payload.out_cash),
-      out_online: toNumber(payload.out_online),
-    }),
-  });
-
-  return {
-    ...row,
-    id: String(row.id),
-    customer: row.customer === null || row.customer === undefined ? null : String(row.customer),
-    store_ref: row.store_ref === null || row.store_ref === undefined ? null : String(row.store_ref),
-  };
-}
-
-export async function updateRepair(id: number, payload: Partial<CreateRepairPayload>): Promise<ApiRepairTicket> {
-  const row = await apiRequest<ApiRepairTicket>(`/repairs/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      ...payload,
-      ...(payload.parts_charge !== undefined ? { parts_charge: toNumber(payload.parts_charge) } : {}),
-      ...(payload.labor_cost !== undefined ? { labor_cost: toNumber(payload.labor_cost) } : {}),
-      ...(payload.got_amount !== undefined ? { got_amount: toNumber(payload.got_amount) } : {}),
-      ...(payload.in_cash !== undefined ? { in_cash: toNumber(payload.in_cash) } : {}),
-      ...(payload.in_online !== undefined ? { in_online: toNumber(payload.in_online) } : {}),
-      ...(payload.out_cash !== undefined ? { out_cash: toNumber(payload.out_cash) } : {}),
-      ...(payload.out_online !== undefined ? { out_online: toNumber(payload.out_online) } : {}),
-    }),
-  });
-
-  return {
-    ...row,
-    id: String(row.id),
-    customer: row.customer === null || row.customer === undefined ? null : String(row.customer),
-    store_ref: row.store_ref === null || row.store_ref === undefined ? null : String(row.store_ref),
-  };
-}
-
-export async function deleteRepair(id: number): Promise<void> {
-  await apiRequest<void>(`/repairs/${id}`, { method: "DELETE" });
 }
 
 export async function listExpenses(): Promise<ApiExpense[]> {
@@ -2259,6 +2269,10 @@ export async function getAdminReportOverview(params: AdminOverviewFilters): Prom
   if (params.storeIds?.length) query.set("storeIds", params.storeIds.join(","));
   const res = await apiRequest<{ success: boolean; data: AdminOverviewResponse }>(`/reports/admin/overview?${query.toString()}`);
   return res.data;
+}
+
+export async function getDashboardSummary(): Promise<DashboardSummary> {
+  return apiRequest<DashboardSummary>("/dashboard/summary");
 }
 
 export async function exportAdminReportPdf(params: AdminOverviewFilters): Promise<Blob> {

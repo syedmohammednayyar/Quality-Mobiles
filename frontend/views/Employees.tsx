@@ -1,488 +1,260 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import {
   createEmployee,
   deleteEmployee,
-  listCredentialAccounts,
   listEmployeeAccessStores,
   listEmployees,
-  resetCredentialPassword,
   updateEmployee,
-  updateStore,
-  type ApiCredentialAccount,
   type ApiEmployee,
   type ApiStore,
 } from '../services/api';
-import { User, isPrivilegedUser } from '../types';
+import { User } from '../types';
 import './Employees.css';
 
 interface EmployeesProps {
   user: User;
   stores?: ApiStore[];
-  onStoresUpdate?: () => void;
 }
 
-const emptyUserForm = {
-  name: '',
-  role: 'Staff' as ApiEmployee['role'],
-  store_ref: '',
-  email: '',
-  phone: '',
-  username: '',
-  password: '',
+type UserForm = {
+  name: string;
+  email: string;
+  phone: string;
+  password: string;
+  confirmPassword: string;
+  role: ApiEmployee['role'];
+  store_ref: string;
+  active: boolean;
 };
 
-const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate }) => {
+const emptyForm: UserForm = {
+  name: '',
+  email: '',
+  phone: '',
+  password: '',
+  confirmPassword: '',
+  role: 'Employee',
+  store_ref: '',
+  active: true,
+};
+
+const Employees: React.FC<EmployeesProps> = ({ user, stores = [] }) => {
   const isAdmin = user.role === 'Admin';
-  const [searchParams] = useSearchParams();
-  const query = (searchParams.get('q') || '').toLowerCase();
   const [employees, setEmployees] = useState<ApiEmployee[]>([]);
-  const [credentials, setCredentials] = useState<ApiCredentialAccount[]>([]);
-  const [managedStores, setManagedStores] = useState<Array<{ id: string; name: string; code: string }>>([]);
+  const [managedStoreIds, setManagedStoreIds] = useState<string[]>([]);
+  const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState('All');
+  const [storeFilter, setStoreFilter] = useState('All');
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [modal, setModal] = useState<'create' | 'edit' | 'view' | 'delete' | null>(null);
+  const [selected, setSelected] = useState<ApiEmployee | null>(null);
+  const [form, setForm] = useState<UserForm>(emptyForm);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [statusMessage, setStatusMessage] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [updating, setUpdating] = useState(false);
-  const [storeUpdating, setStoreUpdating] = useState(false);
-  const [formError, setFormError] = useState('');
-  const [editFormError, setEditFormError] = useState('');
-  const [storeFormError, setStoreFormError] = useState('');
-  const [passwordResetError, setPasswordResetError] = useState('');
-  const [filterRole, setFilterRole] = useState('All');
-  const [filterStore, setFilterStore] = useState('All Stores');
-  const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
-  const [pendingDeleteEmployeeId, setPendingDeleteEmployeeId] = useState<string | null>(null);
-  const [editingStoreId, setEditingStoreId] = useState<string | null>(null);
-  const [passwordResetEmployeeId, setPasswordResetEmployeeId] = useState<string | null>(null);
-  const [passwordResetValue, setPasswordResetValue] = useState('');
-  const [formData, setFormData] = useState(emptyUserForm);
-  const [editFormData, setEditFormData] = useState(emptyUserForm);
-  const [editStoreForm, setEditStoreForm] = useState({ name: '', code: '' });
+  const [message, setMessage] = useState('');
 
-  const fieldStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 6 };
-  const labelStyle: React.CSSProperties = { fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' };
-
-  const loadScreen = async () => {
-    const [employeeRows, credentialRows, accessStores] = await Promise.all([
+  const loadUsers = async () => {
+    const [rows, managed] = await Promise.all([
       listEmployees(),
-      listCredentialAccounts({}),
-      isPrivilegedUser(user) ? listEmployeeAccessStores() : Promise.resolve([]),
+      listEmployeeAccessStores(),
     ]);
-    setEmployees(employeeRows);
-    setCredentials(credentialRows);
-    setManagedStores(accessStores);
+    setEmployees(rows);
+    setManagedStoreIds(managed.map((store) => store.id));
   };
 
   useEffect(() => {
     void (async () => {
       try {
         setLoading(true);
-        setError('');
-        await loadScreen();
+        await loadUsers();
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load user management data');
+        setError(err instanceof Error ? err.message : 'Failed to load users');
       } finally {
         setLoading(false);
       }
     })();
-  }, [user]);
+  }, [user.id]);
 
-  useEffect(() => {
-    setFilterStore(searchParams.get('store') || 'All Stores');
-  }, [searchParams]);
-
-  const managedStoreIds = useMemo(() => new Set(managedStores.map((store) => store.id)), [managedStores]);
   const visibleStores = useMemo(
-    () => (isAdmin ? stores : stores.filter((store) => managedStoreIds.has(store.id))),
-    [isAdmin, managedStoreIds, stores],
+    () => stores.filter((store) => store.is_active && (isAdmin || managedStoreIds.includes(store.id))),
+    [stores, isAdmin, managedStoreIds],
   );
-  const credentialByEmployeeId = useMemo(() => {
-    const map = new Map<string, ApiCredentialAccount>();
-    credentials.forEach((credential) => {
-      if (credential.employee_id) map.set(String(credential.employee_id), credential);
+
+  const filteredUsers = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return employees.filter((employee) => {
+      const searchOk = !query || [employee.name, employee.email, employee.phone].some((value) => String(value || '').toLowerCase().includes(query));
+      const roleOk = roleFilter === 'All' || employee.role === roleFilter;
+      const storeOk = storeFilter === 'All' || employee.store_ref === storeFilter;
+      const statusOk = statusFilter === 'All' || (statusFilter === 'Active' ? employee.active !== false : employee.active === false);
+      return searchOk && roleOk && storeOk && statusOk;
     });
-    return map;
-  }, [credentials]);
-  const editingEmployee = useMemo(
-    () => employees.find((employee) => employee.id === editingEmployeeId) || null,
-    [editingEmployeeId, employees],
-  );
+  }, [employees, roleFilter, search, statusFilter, storeFilter]);
 
-  const filtersRole = ['All', 'Manager', 'Salesman', 'Technician', 'Staff'];
-  const storeOptions = ['All Stores', ...Array.from(new Set(employees.map((employee) => employee.store || 'Unassigned')))];
-
-  const filteredEmployees = employees.filter((employee) => {
-    const credential = credentialByEmployeeId.get(employee.id);
-    const roleOk = filterRole === 'All' || employee.role === filterRole;
-    const storeOk = filterStore === 'All Stores' || (employee.store || 'Unassigned') === filterStore;
-    const statusOk = true;
-    const queryOk = !query
-      || employee.name.toLowerCase().includes(query)
-      || (employee.email || '').toLowerCase().includes(query)
-      || (employee.phone || '').includes(query)
-      || (employee.login_username || '').toLowerCase().includes(query);
-    return roleOk && storeOk && statusOk && queryOk;
-  });
-
-  const resetCreateForm = () => {
-    setFormData(emptyUserForm);
-    setFormError('');
+  const openCreate = () => {
+    setSelected(null);
+    setForm({ ...emptyForm, store_ref: visibleStores[0]?.id || '' });
+    setError('');
+    setModal('create');
   };
 
-  const handleAddEmployee = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setFormError('');
-    setStatusMessage('');
-
-    if (!formData.name.trim()) return setFormError('Full name is required.');
-    if (!formData.store_ref) return setFormError('Please assign a store.');
-    if (!formData.email.trim()) return setFormError('Email is required.');
-    if (!formData.password || formData.password.length < 8) return setFormError('Password must be at least 8 characters.');
-
-    try {
-      setCreating(true);
-      const created = await createEmployee({
-        name: formData.name.trim(),
-        role: formData.role,
-        store: visibleStores.find((store) => store.id === formData.store_ref)?.name || '',
-        store_ref: formData.store_ref,
-        email: formData.email.trim(),
-        phone: formData.phone.trim(),
-        username: formData.username.trim() || undefined,
-        password: formData.password,
-        join_date: new Date().toISOString().slice(0, 10),
-      });
-      setEmployees((current) => [created, ...current]);
-      await loadScreen();
-      resetCreateForm();
-      setStatusMessage('User created successfully.');
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Unable to create user');
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const handleStartEditEmployee = (employee: ApiEmployee) => {
-    setEditingEmployeeId(employee.id);
-    setEditFormError('');
-    setStatusMessage('');
-    setEditFormData({
+  const openEdit = (employee: ApiEmployee) => {
+    setSelected(employee);
+    setForm({
+      ...emptyForm,
       name: employee.name,
-      role: employee.role,
-      store_ref: employee.store_ref ? String(employee.store_ref) : '',
       email: employee.email || '',
       phone: employee.phone || '',
-      username: employee.login_username || '',
-      password: '',
+      role: employee.role,
+      store_ref: employee.store_ref || '',
+      active: employee.active !== false,
     });
+    setError('');
+    setModal('edit');
   };
 
-  const handleEditEmployee = async (employee: ApiEmployee) => {
-    setEditFormError('');
-    setStatusMessage('');
-    if (!editFormData.name.trim()) return setEditFormError('Full name is required.');
-    if (!editFormData.store_ref) return setEditFormError('Store assignment is required.');
-
-    try {
-      setUpdating(true);
-      const updated = await updateEmployee(employee.id, {
-        name: editFormData.name.trim(),
-        role: editFormData.role,
-        store_ref: editFormData.store_ref,
-        email: editFormData.email.trim(),
-        phone: editFormData.phone.trim(),
-        username: editFormData.username.trim() || undefined,
-        password: editFormData.password || undefined,
-      });
-      setEmployees((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)));
-      await loadScreen();
-      setEditingEmployeeId(null);
-      setStatusMessage('User updated successfully.');
-    } catch (err) {
-      setEditFormError(err instanceof Error ? err.message : 'Unable to update user');
-    } finally {
-      setUpdating(false);
-    }
+  const validate = () => {
+    if (!form.name.trim() || !form.email.trim() || !form.phone.trim() || !form.store_ref) return 'Name, email, phone and store are required.';
+    if (modal === 'create' && form.password.length < 8) return 'Password must contain at least 8 characters.';
+    if (form.password && form.password.length < 8) return 'Password must contain at least 8 characters.';
+    if (form.password !== form.confirmPassword) return 'Passwords do not match.';
+    if (!isAdmin && form.role !== 'Employee') return 'Managers can only create and edit Employees.';
+    return '';
   };
 
-  const handleDeleteEmployee = async (employee: ApiEmployee) => {
-    try {
-      await deleteEmployee(employee.id);
-      setEmployees((current) => current.filter((entry) => entry.id !== employee.id));
-      await loadScreen();
-      setPendingDeleteEmployeeId(null);
-      setStatusMessage('User deactivated successfully.');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to delete user');
-    }
-  };
-
-  const handlePasswordReset = async (employeeId: string) => {
-    setPasswordResetError('');
-    if (!passwordResetValue || passwordResetValue.length < 8) {
-      setPasswordResetError('Password must be at least 8 characters.');
+  const saveUser = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const validation = validate();
+    if (validation) {
+      setError(validation);
       return;
     }
-
     try {
-      await resetCredentialPassword(employeeId, passwordResetValue);
-      setPasswordResetEmployeeId(null);
-      setPasswordResetValue('');
-      setStatusMessage('Password reset successfully.');
+      setSaving(true);
+      setError('');
+      const payload = {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        phone: form.phone.trim(),
+        role: form.role,
+        store: visibleStores.find((store) => store.id === form.store_ref)?.name || '',
+        store_ref: form.store_ref,
+        password: form.password || undefined,
+        active: form.active,
+      };
+      if (modal === 'edit' && selected) await updateEmployee(selected.id, payload);
+      else await createEmployee(payload);
+      await loadUsers();
+      setModal(null);
+      setMessage(modal === 'edit' ? 'User updated successfully.' : 'User created successfully.');
     } catch (err) {
-      setPasswordResetError(err instanceof Error ? err.message : 'Unable to reset password');
+      setError(err instanceof Error ? err.message : 'Unable to save user');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleStartEditStore = (store: ApiStore) => {
-    setEditingStoreId(store.id);
-    setStoreFormError('');
-    setEditStoreForm({ name: store.name, code: store.code });
-  };
-
-  const handleEditStore = async (store: ApiStore) => {
+  const confirmDelete = async () => {
+    if (!selected || !isAdmin) return;
     try {
-      setStoreUpdating(true);
-      await updateStore(store.id, {
-        name: editStoreForm.name.trim(),
-        code: isAdmin ? editStoreForm.code.trim().toUpperCase() : undefined,
-      });
-      onStoresUpdate?.();
-      setEditingStoreId(null);
-      setStatusMessage('Store updated successfully.');
+      setSaving(true);
+      await deleteEmployee(selected.id);
+      await loadUsers();
+      setModal(null);
+      setMessage('User deleted successfully.');
     } catch (err) {
-      setStoreFormError(err instanceof Error ? err.message : 'Unable to update store');
+      setError(err instanceof Error ? err.message : 'Unable to delete user');
     } finally {
-      setStoreUpdating(false);
+      setSaving(false);
     }
   };
 
   return (
-    <div className="employees-container">
-      <div className="employees-header">
+    <div className="users-page">
+      <header className="users-header">
         <div>
           <h1>User Management</h1>
-          <p style={{ margin: '6px 0 0', color: 'var(--text-secondary)' }}>
-            Internal account provisioning only. Public signup has been removed.
-          </p>
+          <p>{employees.length} users</p>
         </div>
-      </div>
+        <button className="btn btn-primary" type="button" onClick={openCreate}>
+          <span className="material-icons">person_add</span> Add User
+        </button>
+      </header>
 
-      {passwordResetEmployeeId && (
-        <div className="card" style={{ marginBottom: 16, padding: 16 }}>
-          <h4 style={{ marginTop: 0 }}>Reset Password</h4>
-          <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'minmax(240px, 360px)' }}>
-            <input
-              type="password"
-              className="form-input"
-              placeholder="New password"
-              value={passwordResetValue}
-              onChange={(e) => setPasswordResetValue(e.target.value)}
-            />
-          </div>
-          {passwordResetError && <p style={{ color: 'var(--color-error-600)', margin: '10px 0 0' }}>{passwordResetError}</p>}
-          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-            <button className="btn btn-primary" type="button" onClick={() => void handlePasswordReset(passwordResetEmployeeId)}>Save Password</button>
-            <button className="btn btn-secondary" type="button" onClick={() => setPasswordResetEmployeeId(null)}>Cancel</button>
-          </div>
-        </div>
-      )}
+      <section className="users-toolbar">
+        <label className="users-search">
+          <span className="material-icons">search</span>
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, email or phone" />
+        </label>
+        <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
+          <option value="All">All Roles</option>
+          <option value="Manager">Manager</option>
+          <option value="Employee">Employee</option>
+        </select>
+        <select value={storeFilter} onChange={(event) => setStoreFilter(event.target.value)}>
+          <option value="All">All Stores</option>
+          {visibleStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+        </select>
+        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+          <option value="All">All Statuses</option>
+          <option value="Active">Active</option>
+          <option value="Inactive">Inactive</option>
+        </select>
+      </section>
 
-      {isPrivilegedUser(user) && (
-        <form onSubmit={handleAddEmployee} className="card" style={{ marginBottom: 16, padding: 16 }}>
-          <h3 style={{ marginTop: 0 }}>{isAdmin ? 'Add User' : 'Add Employee'}</h3>
-          <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-            <div style={fieldStyle}><label style={labelStyle}>Full Name</label><input className="form-input" value={formData.name} onChange={(e) => setFormData((current) => ({ ...current, name: e.target.value }))} /></div>
-            <div style={fieldStyle}><label style={labelStyle}>Role</label><select className="form-input" value={formData.role} onChange={(e) => setFormData((current) => ({ ...current, role: e.target.value as ApiEmployee['role'] }))}>
-              {isAdmin && <option value="Manager">Manager</option>}
-              <option value="Salesman">Salesman</option>
-              <option value="Technician">Technician</option>
-              <option value="Staff">Staff</option>
-            </select></div>
-            <div style={fieldStyle}><label style={labelStyle}>Assigned Store</label><select className="form-input" value={formData.store_ref} onChange={(e) => setFormData((current) => ({ ...current, store_ref: e.target.value }))}>
-              <option value="">Select Store</option>
-              {visibleStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
-            </select></div>
-            <div style={fieldStyle}><label style={labelStyle}>Email</label><input className="form-input" value={formData.email} onChange={(e) => setFormData((current) => ({ ...current, email: e.target.value }))} /></div>
-            <div style={fieldStyle}><label style={labelStyle}>Phone</label><input className="form-input" value={formData.phone} onChange={(e) => setFormData((current) => ({ ...current, phone: e.target.value }))} /></div>
-            <div style={fieldStyle}><label style={labelStyle}>Username</label><input className="form-input" value={formData.username} onChange={(e) => setFormData((current) => ({ ...current, username: e.target.value }))} placeholder="Optional" /></div>
-            <div style={fieldStyle}><label style={labelStyle}>Password</label><input type="password" className="form-input" value={formData.password} onChange={(e) => setFormData((current) => ({ ...current, password: e.target.value }))} placeholder="Minimum 8 characters" /></div>
-          </div>
-          {formError && <p style={{ color: 'var(--color-error-600)', margin: '8px 0 0' }}>{formError}</p>}
-          <button className="btn btn-primary" type="submit" style={{ marginTop: 12 }} disabled={creating}>
-            {creating ? 'Creating...' : isAdmin ? 'Create User' : 'Create Employee'}
-          </button>
-        </form>
-      )}
+      {error && !modal && <p className="users-notice error">{error}</p>}
+      {message && <p className="users-notice success">{message}</p>}
 
-      {editingEmployeeId && editingEmployee && (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void handleEditEmployee(editingEmployee);
-          }}
-          className="card"
-          style={{ marginBottom: 16, padding: 16 }}
-        >
-          <h3 style={{ marginTop: 0 }}>Edit User</h3>
-          <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-            <div style={fieldStyle}><label style={labelStyle}>Full Name</label><input className="form-input" value={editFormData.name} onChange={(e) => setEditFormData((current) => ({ ...current, name: e.target.value }))} /></div>
-            <div style={fieldStyle}><label style={labelStyle}>Role</label><select className="form-input" value={editFormData.role} onChange={(e) => setEditFormData((current) => ({ ...current, role: e.target.value as ApiEmployee['role'] }))}>
-              {isAdmin && <option value="Manager">Manager</option>}
-              <option value="Salesman">Salesman</option>
-              <option value="Technician">Technician</option>
-              <option value="Staff">Staff</option>
-            </select></div>
-            <div style={fieldStyle}><label style={labelStyle}>Assigned Store</label><select className="form-input" value={editFormData.store_ref} onChange={(e) => setEditFormData((current) => ({ ...current, store_ref: e.target.value }))}>
-              <option value="">Select Store</option>
-              {visibleStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
-            </select></div>
-            <div style={fieldStyle}><label style={labelStyle}>Email</label><input className="form-input" value={editFormData.email} onChange={(e) => setEditFormData((current) => ({ ...current, email: e.target.value }))} /></div>
-            <div style={fieldStyle}><label style={labelStyle}>Phone</label><input className="form-input" value={editFormData.phone} onChange={(e) => setEditFormData((current) => ({ ...current, phone: e.target.value }))} /></div>
-            <div style={fieldStyle}><label style={labelStyle}>Username</label><input className="form-input" value={editFormData.username} onChange={(e) => setEditFormData((current) => ({ ...current, username: e.target.value }))} /></div>
-            <div style={fieldStyle}><label style={labelStyle}>New Password</label><input type="password" className="form-input" value={editFormData.password} onChange={(e) => setEditFormData((current) => ({ ...current, password: e.target.value }))} placeholder="Leave blank to keep current password" /></div>
-          </div>
-          {editFormError && <p style={{ color: 'var(--color-error-600)', margin: '8px 0 0' }}>{editFormError}</p>}
-          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-            <button className="btn btn-primary" type="submit" disabled={updating}>{updating ? 'Saving...' : 'Save Changes'}</button>
-            <button className="btn btn-secondary" type="button" onClick={() => setEditingEmployeeId(null)}>Cancel</button>
-          </div>
-        </form>
-      )}
-
-      {isPrivilegedUser(user) && (
-        <div className="card" style={{ marginBottom: 16, padding: 16 }}>
-          <h3 style={{ marginTop: 0 }}>Store Configuration</h3>
-          <p style={{ margin: '0 0 12px', color: 'var(--text-secondary)' }}>
-            Stores are fixed system entities. This screen supports edit-only configuration.
-          </p>
-          {storeFormError && <p style={{ color: 'var(--color-error-600)', margin: '8px 0 0' }}>{storeFormError}</p>}
-          {editingStoreId && (
-            <div className="card" style={{ marginTop: 16, padding: 16 }}>
-              <h4 style={{ marginTop: 0 }}>Edit Store</h4>
-              <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-                <div style={fieldStyle}><label style={labelStyle}>Store Name</label><input className="form-input" value={editStoreForm.name} onChange={(e) => setEditStoreForm((current) => ({ ...current, name: e.target.value }))} /></div>
-                <div style={fieldStyle}><label style={labelStyle}>Store Code</label><input className="form-input" value={editStoreForm.code} onChange={(e) => setEditStoreForm((current) => ({ ...current, code: e.target.value }))} disabled={!isAdmin} /></div>
-              </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                <button className="btn btn-primary" type="button" onClick={() => {
-                  const store = visibleStores.find((entry) => entry.id === editingStoreId);
-                  if (store) void handleEditStore(store);
-                }} disabled={storeUpdating}>{storeUpdating ? 'Saving...' : 'Save Store'}</button>
-                <button className="btn btn-secondary" type="button" onClick={() => setEditingStoreId(null)}>Cancel</button>
-              </div>
-            </div>
-          )}
-          <div className="table-wrapper" style={{ marginTop: 16 }}>
-            <table className="employees-table">
-              <thead>
-                <tr>
-                  <th>Store</th>
-                  <th>Code</th>
-                  <th>Type</th>
-                  <th>Parent</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleStores.map((store) => (
-                  <tr key={store.id}>
-                    <td>{store.name}</td>
-                    <td>{store.code}</td>
-                    <td>{store.store_type}</td>
-                    <td>{store.parent ? stores.find((entry) => entry.id === store.parent)?.name || '-' : '-'}</td>
-                    <td><button className="btn btn-secondary btn-sm" type="button" onClick={() => handleStartEditStore(store)}>Edit</button></td>
-                  </tr>
-                ))}
-                {visibleStores.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', padding: 16 }}>No stores available</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {loading && <p>Loading users...</p>}
-      {error && <p style={{ color: 'var(--color-error-600)' }}>{error}</p>}
-      {!error && statusMessage && <p style={{ color: 'var(--color-success-600)' }}>{statusMessage}</p>}
-
-      <div className="filter-section" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-        <div className="role-filter">
-          {filtersRole.map((role) => (
-            <button key={role} className={`filter-btn ${filterRole === role ? 'active' : ''}`} onClick={() => setFilterRole(role)}>
-              {role}
-            </button>
-          ))}
-        </div>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <select value={filterStore} onChange={(e) => setFilterStore(e.target.value)} className="form-input" style={{ maxWidth: 220 }}>
-            {storeOptions.map((store) => <option key={store} value={store}>{store}</option>)}
-          </select>
-        </div>
-      </div>
-
-      <div className="table-wrapper">
-        <table className="employees-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Role</th>
-              <th>Store</th>
-              <th>Login</th>
-              <th>Email</th>
-              <th>Phone</th>
-              <th>Sales/Tickets</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
+      <section className="users-table-wrap">
+        <table className="users-table">
+          <thead><tr><th>User Name</th><th>Email</th><th>Phone Number</th><th>Role</th><th>Assigned Store</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead>
           <tbody>
-            {filteredEmployees.map((employee) => {
-              const credential = credentialByEmployeeId.get(employee.id);
-              return (
-                <tr key={employee.id}>
-                  <td className="name-cell"><div className="avatar">{employee.name.charAt(0)}</div><div className="name-info"><strong>{employee.name}</strong><span className="emp-id">{employee.id.slice(-6).toUpperCase()}</span></div></td>
-                  <td><span className="role-badge">{employee.role}</span></td>
-                  <td>{employee.store || 'Unassigned'}</td>
-                  <td>{employee.login_username || '-'}</td>
-                  <td className="email-cell">{employee.email || '-'}</td>
-                  <td className="phone-cell">{employee.phone || '-'}</td>
-                  <td className="sales-cell"><strong>{employee.sales_count}</strong></td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <button className="btn btn-secondary btn-sm" type="button" onClick={() => handleStartEditEmployee(employee)}>Edit</button>
-                      {isAdmin && pendingDeleteEmployeeId === employee.id ? (
-                        <>
-                          <button className="btn btn-danger btn-sm" type="button" onClick={() => void handleDeleteEmployee(employee)}>Confirm</button>
-                          <button className="btn btn-secondary btn-sm" type="button" onClick={() => setPendingDeleteEmployeeId(null)}>Cancel</button>
-                        </>
-                      ) : null}
-                      {isAdmin && (
-                        <button className="btn btn-secondary btn-sm" type="button" onClick={() => {
-                          setPasswordResetEmployeeId(employee.id);
-                          setPasswordResetValue('');
-                          setPasswordResetError('');
-                        }}>Reset Password</button>
-                      )}
-                      {isAdmin && pendingDeleteEmployeeId !== employee.id && (
-                        <button className="btn btn-danger btn-sm" type="button" onClick={() => setPendingDeleteEmployeeId(employee.id)}>Delete</button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-            {!loading && filteredEmployees.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: 16 }}>No users found</td></tr>}
+            {filteredUsers.map((employee) => (
+              <tr key={employee.id}>
+                <td><div className="user-name-cell"><span>{employee.name.charAt(0).toUpperCase()}</span><strong>{employee.name}</strong></div></td>
+                <td>{employee.email || '-'}</td>
+                <td>{employee.phone || '-'}</td>
+                <td><span className={`user-role-badge ${employee.role.toLowerCase()}`}>{employee.role}</span></td>
+                <td>{employee.store || 'Unassigned'}</td>
+                <td><span className={`user-status ${employee.active === false ? 'inactive' : 'active'}`}>{employee.active === false ? 'Inactive' : 'Active'}</span></td>
+                <td>{employee.last_login ? new Date(employee.last_login).toLocaleString() : '-'}</td>
+                <td><div className="user-actions">
+                  <button title="View user" onClick={() => { setSelected(employee); setModal('view'); }}><span className="material-icons">visibility</span></button>
+                  <button title="Edit user" onClick={() => openEdit(employee)}><span className="material-icons">edit</span></button>
+                  {isAdmin && <button title="Delete user" className="danger" onClick={() => { setSelected(employee); setModal('delete'); }}><span className="material-icons">delete</span></button>}
+                </div></td>
+              </tr>
+            ))}
+            {!loading && filteredUsers.length === 0 && <tr><td colSpan={8} className="users-empty">No users found.</td></tr>}
+            {loading && <tr><td colSpan={8} className="users-empty">Loading users...</td></tr>}
           </tbody>
         </table>
-      </div>
+      </section>
 
-      <div className="stats-section">
-        <div className="stat-card"><h4>Total Users</h4><p className="stat-value">{employees.length}</p></div>
-        <div className="stat-card"><h4>Managers</h4><p className="stat-value">{employees.filter((employee) => employee.role === 'Manager').length}</p></div>
-        <div className="stat-card"><h4>Active Accounts</h4><p className="stat-value">{credentials.filter((credential) => credential.status === 'approved').length}</p></div>
-        <div className="stat-card"><h4>With Login</h4><p className="stat-value">{employees.filter((employee) => Boolean(employee.login_username)).length}</p></div>
-      </div>
+      {(modal === 'create' || modal === 'edit') && (
+        <div className="users-modal-backdrop">
+          <form className="users-modal" onSubmit={saveUser}>
+            <div className="users-modal-head"><div><h2>{modal === 'create' ? 'Add User' : 'Edit User'}</h2><p>Assign role, store and account access.</p></div><button type="button" onClick={() => setModal(null)}><span className="material-icons">close</span></button></div>
+            <div className="users-form-grid">
+              <label><span>Full Name</span><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
+              <label><span>Email</span><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required /></label>
+              <label><span>Phone Number</span><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} required /></label>
+              <label><span>Role</span><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as ApiEmployee['role'] })} disabled={!isAdmin}><option value="Employee">Employee</option>{isAdmin && <option value="Manager">Manager</option>}</select></label>
+              <label><span>Assigned Store</span><select value={form.store_ref} onChange={(e) => setForm({ ...form, store_ref: e.target.value })} required><option value="">Select store</option>{visibleStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select></label>
+              <label className="users-toggle"><span>Account Status</span><input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} /><b>{form.active ? 'Active' : 'Inactive'}</b></label>
+              <label><span>{modal === 'edit' ? 'New Password' : 'Password'}</span><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required={modal === 'create'} /></label>
+              <label><span>Confirm Password</span><input type="password" value={form.confirmPassword} onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })} required={Boolean(form.password)} /></label>
+            </div>
+            {error && <p className="users-notice error">{error}</p>}
+            <div className="users-modal-actions"><button type="button" className="btn btn-secondary" onClick={() => setModal(null)}>Cancel</button><button className="btn btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Save User'}</button></div>
+          </form>
+        </div>
+      )}
+
+      {modal === 'view' && selected && <div className="users-modal-backdrop"><div className="users-modal users-detail"><div className="users-modal-head"><div><h2>{selected.name}</h2><p>User profile and activity summary</p></div><button onClick={() => setModal(null)}><span className="material-icons">close</span></button></div><dl><div><dt>Email</dt><dd>{selected.email || '-'}</dd></div><div><dt>Phone</dt><dd>{selected.phone || '-'}</dd></div><div><dt>Role</dt><dd>{selected.role}</dd></div><div><dt>Store</dt><dd>{selected.store || '-'}</dd></div><div><dt>Status</dt><dd>{selected.active === false ? 'Inactive' : 'Active'}</dd></div><div><dt>Join Date</dt><dd>{selected.join_date ? new Date(selected.join_date).toLocaleDateString() : '-'}</dd></div><div><dt>Last Login</dt><dd>{selected.last_login ? new Date(selected.last_login).toLocaleString() : '-'}</dd></div><div><dt>Sales / Activity</dt><dd>{selected.sales_count}</dd></div></dl></div></div>}
+
+      {modal === 'delete' && selected && <div className="users-modal-backdrop"><div className="users-modal users-delete"><div className="users-modal-head"><div><h2>Delete User</h2><p>This permanently removes access for {selected.name}.</p></div></div>{error && <p className="users-notice error">{error}</p>}<div className="users-modal-actions"><button className="btn btn-secondary" onClick={() => setModal(null)}>Cancel</button><button className="btn btn-danger" disabled={saving} onClick={() => void confirmDelete()}>{saving ? 'Deleting...' : 'Delete User'}</button></div></div></div>}
     </div>
   );
 };

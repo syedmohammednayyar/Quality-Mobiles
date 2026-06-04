@@ -1,6 +1,6 @@
 {
   "name": "Quality-Mobiles Dashboard",
-  "description": "A comprehensive mobile store management system for sales, repairs, inventory, expenses, and financial tracking.",
+  "description": "A comprehensive mobile store management system for sales, buybacks, inventory, expenses, and financial tracking.",
   "requestFramePermissions": [
     "camera"
   ]

@@ -11,7 +11,7 @@ export interface ThemeColors {
 export type NotificationType = 'success' | 'error' | 'warning' | 'info';
 
 // ==================== USER & AUTH ====================
-export type UserRole = 'Admin' | 'Manager' | 'Sales' | 'Staff' | 'Salesman' | 'Technician';
+export type UserRole = 'Admin' | 'Manager' | 'Employee';
 
 export interface User {
   id: string;
@@ -28,7 +28,7 @@ export const isPrivilegedUser = (user: Pick<User, 'role'> | null | undefined): b
   user?.role === 'Admin' || user?.role === 'Manager';
 
 export const isSalesUser = (user: Pick<User, 'role'> | null | undefined): boolean =>
-  user?.role === 'Admin' || user?.role === 'Manager' || user?.role === 'Sales' || user?.role === 'Staff' || user?.role === 'Salesman';
+  user?.role === 'Admin' || user?.role === 'Manager';
 
 // ==================== STORE MANAGEMENT ====================
 export type StoreType = 'Main' | 'Secondary';

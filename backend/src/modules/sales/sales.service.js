@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { BulkInventory, Buyback, Customer, Employee, Product, Repair, Sale, SerializedInventory, StockLedger, Store, StoreInventory, User } from "../../db/models.js";
+import { BulkInventory, Buyback, Customer, Employee, Product, Sale, SerializedInventory, StockLedger, Store, StoreInventory, User } from "../../db/models.js";
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
 
@@ -176,6 +176,14 @@ export async function createSale(input) {
         );
       }
 
+      if (item.quantity !== 1) {
+        throw new HttpError(
+          400,
+          "Each job number represents one device and must be sold as quantity 1",
+          "SALE_JOB_QUANTITY_MUST_BE_ONE",
+        );
+      }
+
       const availableQuantity = inventoryByProductId.get(item.productId) || 0;
       if (product.category !== "service" && item.quantity > availableQuantity) {
         throw new HttpError(
@@ -323,6 +331,11 @@ export async function createSale(input) {
               );
             }
           }
+          await StoreInventory.findOneAndUpdate(
+            { store: input.storeId, "items.product": item.product },
+            { $set: { "items.$.quantity": 0, updatedAt: new Date() } },
+            { session },
+          );
         }
 
         await StockLedger.create([{
@@ -335,7 +348,13 @@ export async function createSale(input) {
           note: `Sale ${finalSaleNo}`,
           createdBy: input.userId,
         }], { session });
+        await Product.updateOne(
+          { _id: item.product },
+          { $set: { inventoryStatus: "sold", updatedAt: new Date() } },
+          { session },
+        );
       }
+
     }
 
     return {
@@ -360,7 +379,7 @@ export async function getSaleById(saleId) {
 }
 
 export async function listSales(input) {
-  const limit = Math.max(1, Math.min(input?.limit || 200, 500));
+  const limit = Math.max(1, Math.min(input?.limit || 5000, 5000));
   const offset = Math.max(0, input?.offset || 0);
 
   const query = {};
@@ -368,17 +387,43 @@ export async function listSales(input) {
     query.store = input.storeId;
   }
 
-  const sales = await Sale.find(query)
+  const sales = await Sale.find({ ...query, status: "completed" })
+    .populate("customer", "fullName phone")
+    .populate("store", "name")
+    .populate("employee", "fullName")
+    .populate("items.product", "jobId name brand model imei")
     .sort({ createdAt: -1 })
     .skip(offset)
     .limit(limit);
 
-  return sales.map(s => {
-    const obj = s.toObject();
-    obj.id = s._id.toString();
-    obj.item_count = s.items.reduce((sum, item) => sum + item.quantity, 0);
-    return obj;
-  });
+  return sales.map((sale) => ({
+    id: sale._id.toString(),
+    sale_no: sale.saleNo,
+    customer: sale.customer?._id?.toString?.() || null,
+    customer_name: sale.customer?.fullName || "Walk-in",
+    store_ref: sale.store?._id?.toString?.() || String(sale.store),
+    store_name: sale.store?.name || "",
+    employee_id: sale.employee?._id?.toString?.() || String(sale.employee),
+    employee_name: sale.employee?.fullName || sale.salespersonName || "",
+    job_no: sale.jobNumber || sale.items[0]?.product?.jobId || "",
+    sold_at: sale.createdAt,
+    notes: sale.note || "",
+    total_amount: Number(sale.grandTotal || 0).toFixed(2),
+    payment_status: sale.paymentStatus,
+    sale_status: sale.status,
+    payment_method: sale.payments.map((payment) => payment.paymentMethod).filter(Boolean).join(", "),
+    items: sale.items.map((item) => ({
+      id: item._id?.toString?.(),
+      product: item.product?._id?.toString?.() || String(item.product),
+      job_no: item.product?.jobId || sale.jobNumber || "",
+      product_name: item.product?.name || "",
+      brand: item.product?.brand || "",
+      imei: item.product?.imei || "",
+      quantity: item.quantity,
+      unit_price: Number(item.unitPrice || 0).toFixed(2),
+      line_total: Number(item.lineTotal || 0).toFixed(2),
+    })),
+  }));
 }
 
 export async function updateSale(saleId, input) {
@@ -481,6 +526,11 @@ export async function deleteSale(saleId, userId) {
 
     for (const item of sale.items) {
       if (item.product.category !== "service") {
+        await BulkInventory.findOneAndUpdate(
+          { store: sale.store, product: item.product._id },
+          { $set: { quantity: 1, reservedQuantity: 0, updatedAt: new Date() } },
+          { upsert: true, session },
+        );
         await StoreInventory.findOneAndUpdate(
           { 
             store: new mongoose.Types.ObjectId(sale.store), 
@@ -503,6 +553,11 @@ export async function deleteSale(saleId, userId) {
           note: `Sale ${sale.saleNo} deleted and stock restored`,
           createdBy: userId,
         }], { session });
+        await Product.updateOne(
+          { _id: item.product._id },
+          { $set: { inventoryStatus: "ready", updatedAt: new Date() } },
+          { session },
+        );
       }
     }
 
@@ -538,7 +593,6 @@ export async function lookupSaleJob(jobNumber, auth) {
 
   const visibleSale = sale && (!scopedStore || String(sale.store) === String(scopedStore)) ? sale : null;
   const buyback = await Buyback.findOne({ ...scopedStoreQuery, $or: [{ jobNo: jobNumber }, { imei: jobNumber }] }).sort({ createdAt: -1 }).lean();
-  const repair = await Repair.findOne({ ...scopedStoreQuery, $or: [{ jobNumber }, { serviceJobId: jobNumber }, { ticketNo: jobNumber }] }).sort({ createdAt: -1 }).lean();
   const visibleProduct = product && (!scopedStore || visibleSale || serializedInventory.length > 0 || bulkInventory.length > 0)
     ? product
     : null;
@@ -639,20 +693,5 @@ export async function lookupSaleJob(jobNumber, auth) {
       inventory_mode: "bulk",
     }))),
     buyback,
-    repair: repair ? {
-      id: repair._id.toString(),
-      ticket_no: repair.ticketNo,
-      customer_name: repair.customerName,
-      customer: repair.customer ? String(repair.customer) : null,
-      store_ref: repair.store ? String(repair.store) : null,
-      device_model: repair.deviceModel,
-      problem: repair.problem || "",
-      technician_name: repair.technicianName || "",
-      status: repair.status,
-      parts: repair.parts || [],
-      labor_cost: Number(repair.laborCost || 0).toFixed(2),
-      notes: repair.notes || "",
-      created_at: repair.createdAt,
-    } : null,
   };
 }

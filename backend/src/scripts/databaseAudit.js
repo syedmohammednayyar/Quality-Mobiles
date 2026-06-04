@@ -9,7 +9,6 @@ import {
   EmployeeStoreAssignment,
   PaymentEntry,
   Product,
-  Repair,
   Role,
   Sale,
   SerializedInventory,
@@ -41,7 +40,7 @@ async function countDuplicateValues(Model, field) {
 }
 
 async function validateReferences() {
-  const [users, employees, assignments, credentials, stores, sales, buybacks, repairs, payments, ledgerRows, inventories, bulkRows, serialRows] = await Promise.all([
+  const [users, employees, assignments, credentials, stores, sales, buybacks, payments, ledgerRows, inventories, bulkRows, serialRows] = await Promise.all([
     User.find().lean(),
     Employee.find().lean(),
     EmployeeStoreAssignment.find().lean(),
@@ -49,7 +48,6 @@ async function validateReferences() {
     Store.find().lean(),
     Sale.find().lean(),
     Buyback.find().lean(),
-    Repair.find().lean(),
     PaymentEntry.find().lean(),
     StockLedger.find().lean(),
     StoreInventory.find().lean(),
@@ -82,8 +80,6 @@ async function validateReferences() {
   const badBuybacks = buybacks.filter((row) => (row.store && !storeIds.has(row.store.toString())) || (row.customer && !customerIds.has(row.customer.toString())) || (row.inventoryProduct && !productIds.has(row.inventoryProduct.toString())));
   addCheck("Buybacks reference valid store/customer/inventory product", badBuybacks.length === 0, `${badBuybacks.length} invalid buyback references`);
 
-  const badRepairs = repairs.filter((row) => (row.store && !storeIds.has(row.store.toString())) || (row.customer && !customerIds.has(row.customer.toString())) || (row.inventoryProduct && !productIds.has(row.inventoryProduct.toString())));
-  addCheck("Repairs reference valid store/customer/inventory product", badRepairs.length === 0, `${badRepairs.length} invalid repair references`);
 
   const badPayments = payments.filter((row) => row.store && !storeIds.has(row.store.toString()));
   addCheck("Payments reference valid stores", badPayments.length === 0, `${badPayments.length} invalid payment store references`);

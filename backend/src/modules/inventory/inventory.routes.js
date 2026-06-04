@@ -6,6 +6,7 @@ import {
   listLowStockHandler,
   listInventoryByQueryHandler,
   listInventoryHandler,
+  listProductTransferHistoryHandler,
   listStoresHandler,
   transferStockHandler,
 } from "./inventory.controller.js";
@@ -24,6 +25,12 @@ inventoryRouter.get(
   "/",
   authorize("admin", "manager", "cashier", "inventory_manager"),
   listInventoryByQueryHandler,
+);
+
+inventoryRouter.get(
+  "/products/:productId/transfers",
+  authorize("admin", "manager", "employee"),
+  listProductTransferHistoryHandler,
 );
 
 inventoryRouter.get(

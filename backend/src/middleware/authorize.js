@@ -7,10 +7,16 @@ export function authorize(...allowedRoles) {
       return;
     }
 
-    const hasRole = req.auth.roles.some((role) => allowedRoles.includes(role));
+    const normalizedRoles = req.auth.roles.map((role) =>
+      role === "cashier" || role === "inventory_manager" ? "employee" : role
+    );
+    const normalizedAllowed = allowedRoles.map((role) =>
+      role === "cashier" || role === "inventory_manager" ? "employee" : role
+    );
+    const hasRole = normalizedRoles.some((role) => normalizedAllowed.includes(role));
     if (!hasRole) {
       next(
-        new HttpError(403, "Forbidden: insufficient role", "AUTH_FORBIDDEN"),
+        new HttpError(403, "Access not available for this role", "AUTH_FORBIDDEN"),
       );
       return;
     }

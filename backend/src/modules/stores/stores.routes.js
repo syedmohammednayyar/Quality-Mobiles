@@ -12,7 +12,7 @@ storesRouter.use(authenticate);
 
 storesRouter.get(
   "/",
-  authorize("admin", "manager", "cashier", "inventory_manager"),
+  authorize("admin", "manager", "employee"),
   listStoresHandler,
 );
 storesRouter.patch(

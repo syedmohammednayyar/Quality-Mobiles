@@ -14,7 +14,7 @@ expensesRouter.use(authenticate);
 
 expensesRouter.get(
   "/",
-  authorize("admin", "manager", "inventory_manager"),
+  authorize("admin", "manager", "employee"),
   listExpensesHandler,
 );
 expensesRouter.post("/", authorize("admin", "manager"), createExpenseHandler);
