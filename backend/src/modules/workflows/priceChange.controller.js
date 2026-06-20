@@ -30,7 +30,7 @@ export async function listPendingPriceChangesHandler(req, res, next) {
 
 export async function approvePriceChangeHandler(req, res, next) {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = req.params.id;
 
     const result = await priceChangeService.approvePriceChange(id, req.auth.id);
 
@@ -42,7 +42,7 @@ export async function approvePriceChangeHandler(req, res, next) {
 
 export async function rejectPriceChangeHandler(req, res, next) {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = req.params.id;
     const { rejectionReason } = req.body;
 
     const result = await priceChangeService.rejectPriceChange(

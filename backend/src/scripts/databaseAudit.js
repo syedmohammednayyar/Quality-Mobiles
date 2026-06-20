@@ -19,6 +19,12 @@ import {
 } from "../db/models.js";
 
 const checks = [];
+const FIXED_STORES = [
+  { code: "STORE1", name: "Store 1" },
+  { code: "STORE2", name: "Store 2" },
+  { code: "STORE3", name: "Store 3" },
+  { code: "STORE4", name: "Store 4" },
+];
 
 function addCheck(name, passed, detail = "") {
   checks.push({ name, passed, detail });
@@ -97,6 +103,34 @@ async function validateReferences() {
   addCheck("Serialized inventory references valid products/stores", badSerializedInventory.length === 0, `${badSerializedInventory.length} invalid serialized inventory records`);
 }
 
+async function validateFixedStoreContract() {
+  const stores = await Store.find().sort({ code: 1 }).lean();
+  const activeStores = stores.filter((store) => store.isActive !== false);
+  const fixedCodes = new Set(FIXED_STORES.map((store) => store.code));
+  const activeFixedStores = activeStores.filter((store) => fixedCodes.has(store.code));
+  const codeCounts = new Map();
+  const nameCounts = new Map();
+
+  stores.forEach((store) => {
+    codeCounts.set(store.code, (codeCounts.get(store.code) || 0) + 1);
+    nameCounts.set(store.name, (nameCounts.get(store.name) || 0) + 1);
+  });
+
+  addCheck("Store count is exactly 4 active fixed stores", activeStores.length === 4 && activeFixedStores.length === 4, `${activeStores.length} active stores, ${activeFixedStores.length} active fixed stores`);
+
+  for (const expected of FIXED_STORES) {
+    const matches = stores.filter((store) => store.code === expected.code);
+    const store = matches[0];
+    addCheck(`${expected.name} exists once with canonical code`, matches.length === 1, `${matches.length} records for ${expected.code}`);
+    addCheck(`${expected.name} is visible and active`, Boolean(store && store.name === expected.name && store.isActive !== false), store ? `name=${store.name}, isActive=${store.isActive !== false}` : "missing");
+  }
+
+  const duplicateCodes = [...codeCounts.entries()].filter(([, count]) => count > 1);
+  const duplicateNames = [...nameCounts.entries()].filter(([, count]) => count > 1);
+  addCheck("Store codes are unique", duplicateCodes.length === 0, `${duplicateCodes.length} duplicate code groups`);
+  addCheck("Store names are unique", duplicateNames.length === 0, `${duplicateNames.length} duplicate name groups`);
+}
+
 async function validateDuplicates() {
   const duplicateProductImei = await countDuplicateValues(Product, "imei");
   const duplicateProductBarcode = await countDuplicateValues(Product, "barcode");
@@ -124,6 +158,7 @@ async function validateIndexes() {
 
 async function main() {
   await connectDB();
+  await validateFixedStoreContract();
   await validateReferences();
   await validateDuplicates();
   await validateIndexes();

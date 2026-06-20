@@ -40,7 +40,7 @@ export async function checkIcNumberLockedHandler(req, res, next) {
     const { entityType, entityId } = req.params;
     const isLocked = await icNumberService.isIcNumberLocked(
       entityType,
-      parseInt(entityId, 10),
+      entityId,
     );
 
     res.json({ success: true, data: { isLocked } });

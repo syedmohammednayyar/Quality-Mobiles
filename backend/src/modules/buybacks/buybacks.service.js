@@ -128,7 +128,7 @@ async function processBuybackIntoInventory(buyback, userId, session) {
         condition: "used",
         category: 'used_phone',
         purchasePrice: Number(toMoney(buyback.negotiatedPrice)),
-        unitPrice: Number(toMoney(buyback.marketValue || buyback.negotiatedPrice)),
+        unitPrice: Number(toMoney(buyback.finalValuation || buyback.negotiatedPrice || buyback.suggestedResalePrice)),
         inventoryStatus: "ready",
         inventoryMode: "serialized",
         taxRate: 0,

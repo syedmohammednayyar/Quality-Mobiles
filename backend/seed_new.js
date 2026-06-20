@@ -4,11 +4,29 @@ import { connectDB } from "./src/db/mongodb.js";
 import {
   Role,
   User,
+  AuthSession,
   Store,
   Employee,
   EmployeeStoreAssignment,
+  EmployeeCredential,
+  Customer,
   Product,
-  StoreInventory
+  StoreInventory,
+  BulkInventory,
+  SerializedInventory,
+  StockLedger,
+  Sale,
+  Buyback,
+  Expense,
+  PaymentEntry,
+  ChangeRequest,
+  Notification,
+  GiftTransaction,
+  AuditLog,
+  ExportLog,
+  StoreManagerAssignment,
+  SignupRequest,
+  SequenceCounter,
 } from "./src/db/models.js";
 
 async function seed() {
@@ -16,13 +34,31 @@ async function seed() {
 
   try {
     console.log("Cleaning up database...");
+    await AuditLog.deleteMany({});
+    await AuthSession.deleteMany({});
+    await Buyback.deleteMany({});
+    await BulkInventory.deleteMany({});
+    await ChangeRequest.deleteMany({});
+    await Customer.deleteMany({});
+    await EmployeeCredential.deleteMany({});
+    await Expense.deleteMany({});
+    await ExportLog.deleteMany({});
+    await GiftTransaction.deleteMany({});
+    await Notification.deleteMany({});
+    await PaymentEntry.deleteMany({});
+    await Sale.deleteMany({});
+    await SerializedInventory.deleteMany({});
+    await StockLedger.deleteMany({});
+    await StoreManagerAssignment.deleteMany({});
+    await SignupRequest.deleteMany({});
+    await SequenceCounter.deleteMany({});
+    await StoreInventory.deleteMany({});
     await Role.deleteMany({});
     await User.deleteMany({});
     await Store.deleteMany({});
     await Employee.deleteMany({});
     await EmployeeStoreAssignment.deleteMany({});
     await Product.deleteMany({});
-    await StoreInventory.deleteMany({});
 
     console.log("Creating Roles...");
     const adminRole = await Role.create({

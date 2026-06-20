@@ -186,9 +186,6 @@ const serializedInventorySchema = new mongoose.Schema({
 }, { timestamps: true });
 serializedInventorySchema.index({ store: 1, product: 1, status: 1, createdAt: -1 });
 
-// Ensure serialized inventory job numbers are indexed for quick search
-serializedInventorySchema.index({ jobNumber: 1 });
-
 const bulkInventorySchema = new mongoose.Schema({
   product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
   store: { type: mongoose.Schema.Types.ObjectId, ref: "Store", required: true },

@@ -42,7 +42,7 @@ async function requireParentStore(parentId) {
 
 export async function listStores(filterStoreId) {
   const query = filterStoreId ? { _id: filterStoreId, isActive: { $ne: false } } : { isActive: { $ne: false } };
-  const stores = await Store.find(query).sort({ createdAt: -1 });
+  const stores = await Store.find(query).sort({ code: 1, name: 1 });
   return stores.map(mapStore);
 }
 
@@ -140,7 +140,10 @@ export async function ensureFixedStores() {
     for (const item of FIXED_STORES) {
       await Store.updateOne(
         { code: item.code },
-        { $setOnInsert: { code: item.code, name: item.name, isActive: true } },
+        {
+          $set: { name: item.name, isActive: true, parentStore: null },
+          $setOnInsert: { code: item.code },
+        },
         { upsert: true, session },
       );
     }

@@ -67,7 +67,7 @@ export async function receiveGiftHandler(req, res, next) {
 
 export async function listGiftInventoryHandler(req, res, next) {
   try {
-    const storeId = parseInt(req.params.storeId, 10);
+    const storeId = req.params.storeId;
 
     const result = await giftService.listGiftInventory(storeId);
 
@@ -79,10 +79,8 @@ export async function listGiftInventoryHandler(req, res, next) {
 
 export async function getGiftTransactionHistoryHandler(req, res, next) {
   try {
-    const storeId = parseInt(req.params.storeId, 10);
-    const productId = req.query.productId
-      ? parseInt(req.query.productId, 10)
-      : undefined;
+    const storeId = req.params.storeId;
+    const productId = req.query.productId ? String(req.query.productId) : undefined;
 
     const result = await giftService.getGiftTransactionHistory(
       storeId,

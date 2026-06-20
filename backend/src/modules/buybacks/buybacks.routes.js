@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { authorize } from "../../middleware/authorize.js";
+import { applyStoreFilter, resolveStoreContext } from "../../middleware/storeScope.js";
 import {
   createBuybackHandler,
   deleteBuybackHandler,
@@ -11,6 +12,8 @@ import {
 export const buybacksRouter = Router();
 
 buybacksRouter.use(authenticate);
+buybacksRouter.use(resolveStoreContext);
+buybacksRouter.use(applyStoreFilter);
 
 buybacksRouter.get(
   "/",

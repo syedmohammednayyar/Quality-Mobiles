@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { authorize } from "../../middleware/authorize.js";
+import { applyStoreFilter, resolveStoreContext } from "../../middleware/storeScope.js";
 import {
   adjustInventoryHandler,
   listLowStockHandler,
@@ -14,6 +15,8 @@ import {
 export const inventoryRouter = Router();
 
 inventoryRouter.use(authenticate);
+inventoryRouter.use(resolveStoreContext);
+inventoryRouter.use(applyStoreFilter);
 
 inventoryRouter.get(
   "/stores",

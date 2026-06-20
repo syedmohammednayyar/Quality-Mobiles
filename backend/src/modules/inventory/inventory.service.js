@@ -317,7 +317,7 @@ export async function transferStock(input) {
           ...(input.userId ? { addedBy: input.userId } : {}),
         },
       },
-      { session, new: true },
+      { session, returnDocument: "after" },
     ) : null;
 
     if (!movedBulk) {

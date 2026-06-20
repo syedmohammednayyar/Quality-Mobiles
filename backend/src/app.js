@@ -2,7 +2,6 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import { errorHandler } from "./middleware/errorHandler.js";
-import { applyStoreFilter, resolveStoreContext } from "./middleware/storeScope.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { buybacksRouter } from "./modules/buybacks/buybacks.routes.js";
 import { customersRouter } from "./modules/customers/customers.routes.js";
@@ -24,8 +23,6 @@ export const app = express();
 app.use(helmet());
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "1mb" }));
-app.use(resolveStoreContext);
-app.use(applyStoreFilter);
 
 app.get("/api/v1/health", (_req, res) => {
   res.json({ status: "ok" });

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { authorize } from "../../middleware/authorize.js";
+import { applyStoreFilter, resolveStoreContext } from "../../middleware/storeScope.js";
 import {
   createChangeRequestHandler,
   listChangeRequestsHandler,
@@ -14,6 +15,8 @@ const router = Router();
 
 // All routes require authentication
 router.use(authenticate);
+router.use(resolveStoreContext);
+router.use(applyStoreFilter);
 
 // Create a new change request (any authenticated user)
 router.post(

@@ -102,7 +102,7 @@ async function getRoleId(roleName) {
   const role = await Role.findOneAndUpdate(
     { name: roleName },
     { $setOnInsert: { description: roleName === "employee" ? "Store-linked operational employee" : "Store manager" } },
-    { upsert: true, new: true },
+    { upsert: true, returnDocument: "after" },
   );
   return role._id;
 }

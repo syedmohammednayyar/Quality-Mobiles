@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { authorize } from "../../middleware/authorize.js";
+import { applyStoreFilter, resolveStoreContext } from "../../middleware/storeScope.js";
 import * as jobNumberController from "./jobNumber.controller.js";
 import * as icNumberController from "./icNumber.controller.js";
 import * as giftController from "./gift.controller.js";
@@ -9,6 +10,10 @@ import * as exportController from "./export.controller.js";
 import * as cashVisibilityController from "./cashVisibility.controller.js";
 
 const router = Router();
+
+router.use(authenticate);
+router.use(resolveStoreContext);
+router.use(applyStoreFilter);
 
 // =============================================
 // JOB NUMBER ENDPOINTS

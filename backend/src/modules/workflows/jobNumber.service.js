@@ -34,7 +34,7 @@ export async function linkJobNumberToProduct(input) {
     const updatedProduct = await Product.findByIdAndUpdate(
       input.productId,
       { jobNumber: input.jobNumber },
-      { session, new: true }
+      { session, returnDocument: "after" }
     );
 
     if (!updatedProduct) {
@@ -134,7 +134,7 @@ export async function unlinkJobNumber(productId) {
     const updatedProduct = await Product.findByIdAndUpdate(
       productId,
       { $unset: { jobNumber: "" } },
-      { session, new: true }
+      { session, returnDocument: "after" }
     );
 
     if (!updatedProduct) {

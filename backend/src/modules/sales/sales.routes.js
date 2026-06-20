@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { authorize } from "../../middleware/authorize.js";
+import { applyStoreFilter, resolveStoreContext } from "../../middleware/storeScope.js";
 import {
   createSaleHandler,
   deleteSaleHandler,
@@ -13,6 +14,8 @@ import {
 export const salesRouter = Router();
 
 salesRouter.use(authenticate);
+salesRouter.use(resolveStoreContext);
+salesRouter.use(applyStoreFilter);
 
 salesRouter.get(
   "/",

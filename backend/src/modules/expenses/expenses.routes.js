@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { authorize } from "../../middleware/authorize.js";
+import { applyStoreFilter, resolveStoreContext } from "../../middleware/storeScope.js";
 import {
   createExpenseHandler,
   deleteExpenseHandler,
@@ -11,6 +12,8 @@ import {
 export const expensesRouter = Router();
 
 expensesRouter.use(authenticate);
+expensesRouter.use(resolveStoreContext);
+expensesRouter.use(applyStoreFilter);
 
 expensesRouter.get(
   "/",

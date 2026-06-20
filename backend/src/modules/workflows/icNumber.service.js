@@ -18,7 +18,7 @@ export async function captureIcNumber(input) {
       updatedEntity = await Sale.findByIdAndUpdate(
         input.entityId,
         { icNumber: input.icNumber, icLocked: true },
-        { session, new: true }
+        { session, returnDocument: "after" }
       );
       if (!updatedEntity) {
         throw new HttpError(404, "Sale not found", "SALE_NOT_FOUND");
@@ -27,7 +27,7 @@ export async function captureIcNumber(input) {
       updatedEntity = await Product.findByIdAndUpdate(
         input.entityId,
         { icNumber: input.icNumber, icLocked: true },
-        { session, new: true }
+        { session, returnDocument: "after" }
       );
       if (!updatedEntity) {
         throw new HttpError(404, "Product not found", "PRODUCT_NOT_FOUND");

@@ -8,7 +8,7 @@ export async function exportSalesCSVHandler(req, res, next) {
 
     const result = await exportService.exportSalesToCSV(
       {
-        storeId: storeId ? parseInt(storeId, 10) : undefined,
+        storeId: storeId ? String(storeId) : undefined,
         fromDate: fromDate,
         toDate: toDate,
       },
@@ -32,7 +32,7 @@ export async function exportInventoryCSVHandler(req, res, next) {
 
     const result = await exportService.exportInventoryToCSV(
       {
-        storeId: storeId ? parseInt(storeId, 10) : undefined,
+        storeId: storeId ? String(storeId) : undefined,
       },
       req.auth.id,
     );
@@ -77,7 +77,7 @@ export async function exportBuybacksCSVHandler(req, res, next) {
 
     const result = await exportService.exportBuybacksToCSV(
       {
-        storeId: storeId ? parseInt(storeId, 10) : undefined,
+        storeId: storeId ? String(storeId) : undefined,
         fromDate: fromDate,
         toDate: toDate,
       },
@@ -110,7 +110,7 @@ export async function exportInventoryPDFHandler(req, res, next) {
     const { storeId } = req.query;
 
     const rows = await exportService.exportInventoryRows(
-      { storeId: storeId ? parseInt(storeId, 10) : undefined },
+      { storeId: storeId ? String(storeId) : undefined },
       req.auth.id,
     );
 

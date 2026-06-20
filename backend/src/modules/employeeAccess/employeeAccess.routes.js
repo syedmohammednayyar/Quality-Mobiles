@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { authorize } from "../../middleware/authorize.js";
+import { applyStoreFilter, resolveStoreContext } from "../../middleware/storeScope.js";
 import {
   listManagedStoresHandler,
   resetCredentialPasswordHandler,
@@ -9,6 +10,8 @@ import {
 export const employeeAccessRouter = Router();
 
 employeeAccessRouter.use(authenticate);
+employeeAccessRouter.use(resolveStoreContext);
+employeeAccessRouter.use(applyStoreFilter);
 employeeAccessRouter.use(authorize("admin", "manager"));
 
 employeeAccessRouter.post("/credentials/:employeeId/reset-password", authorize("admin"), resetCredentialPasswordHandler);

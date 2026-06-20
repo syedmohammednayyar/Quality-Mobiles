@@ -200,7 +200,7 @@ async function upsertBulkInventory(session, storeId, productId, quantity, minSto
         addedBy: userId || undefined,
       },
     },
-    { upsert: true, session, new: true },
+    { upsert: true, session, returnDocument: "after" },
   );
 }
 
@@ -265,7 +265,7 @@ export async function listProducts(input = {}) {
 export async function createProduct(input) {
   const sku = String(input.sku || "").trim();
   const name = String(input.name || "").trim();
-  const stockQuantity = 1;
+  const stockQuantity = Number(input.stockQuantity ?? 1);
   const primaryStoreRef = input.primaryStoreRef || null;
   const inventoryMode = resolveInventoryMode(input);
   const serializedEntries = Array.isArray(input.serializedEntries) ? input.serializedEntries : [];
@@ -275,6 +275,10 @@ export async function createProduct(input) {
   if (Number(input.price) < 0 || Number(input.purchasePrice || 0) < 0) {
     throw new HttpError(400, "Price must be non-negative", "PRODUCT_INVALID_PRICE");
   }
+  if (!Number.isInteger(stockQuantity) || stockQuantity < 0) {
+    throw new HttpError(400, "Stock quantity must be a non-negative integer", "PRODUCT_INVALID_STOCK_QUANTITY");
+  }
+  await ensureUnique("sku", sku, "PRODUCT_DUPLICATE_SKU", "SKU already exists");
   if (!primaryStoreRef) {
     throw new HttpError(400, "Store assignment is required", "PRODUCT_STORE_REQUIRED_FOR_STOCK");
   }

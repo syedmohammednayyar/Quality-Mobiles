@@ -176,7 +176,7 @@ export async function createSale(input) {
         );
       }
 
-      if (item.quantity !== 1) {
+      if (product.inventoryMode === "serialized" && item.quantity !== 1) {
         throw new HttpError(
           400,
           "Each job number represents one device and must be sold as quantity 1",
@@ -299,11 +299,19 @@ export async function createSale(input) {
             { $set: { status: "sold", updatedAt: new Date() } },
             { session },
           );
+          await StoreInventory.findOneAndUpdate(
+            { store: input.storeId, "items.product": item.product },
+            {
+              $inc: { "items.$.quantity": -item.quantity },
+              $set: { updatedAt: new Date() },
+            },
+            { session },
+          );
         } else {
           const updatedBulk = await BulkInventory.findOneAndUpdate(
             { store: input.storeId, product: item.product, quantity: { $gte: item.quantity } },
             { $inc: { quantity: -item.quantity }, $set: { updatedAt: new Date() } },
-            { session, new: true },
+            { session, returnDocument: "after" },
           );
           if (!updatedBulk) {
             const updatedInv = await StoreInventory.findOneAndUpdate(

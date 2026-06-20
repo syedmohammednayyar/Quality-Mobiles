@@ -2,7 +2,7 @@ import * as jobNumberService from "./jobNumber.service.js";
 
 export async function linkJobNumberHandler(req, res, next) {
   try {
-    const productId = parseInt(req.params.productId, 10);
+    const productId = req.params.productId;
     const { jobNumber } = req.body;
 
     const result = await jobNumberService.linkJobNumberToProduct({
@@ -58,7 +58,7 @@ export async function searchInventoryByJobNumberHandler(req, res, next) {
 
 export async function unlinkJobNumberHandler(req, res, next) {
   try {
-    const productId = parseInt(req.params.productId, 10);
+    const productId = req.params.productId;
 
     const result = await jobNumberService.unlinkJobNumber(productId);
 

@@ -127,7 +127,7 @@ export async function approvePriceChange(priceChangeRequestId, userId) {
     const product = await Product.findByIdAndUpdate(
       changeRequest.entityId,
       { unitPrice: changeRequest.newValue },
-      { session, new: true }
+      { session, returnDocument: "after" }
     );
 
     if (!product) {

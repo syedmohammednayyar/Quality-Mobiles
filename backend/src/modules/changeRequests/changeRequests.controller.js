@@ -1,4 +1,5 @@
 import { HttpError } from "../../utils/httpError.js";
+import { assertObjectId } from "../../utils/ids.js";
 import {
   createChangeRequest,
   listChangeRequests,
@@ -25,7 +26,7 @@ export async function createChangeRequestHandler(req, res, next) {
 
     const input = {
       entityType,
-      entityId: Number(entityId),
+      entityId: String(entityId),
       fieldName,
       oldValue: String(oldValue),
       newValue: String(newValue),
@@ -47,7 +48,7 @@ export async function listChangeRequestsHandler(req, res, next) {
     const filters = {
       status: status,
       entityType: entityType,
-      requestedBy: requestedBy ? Number(requestedBy) : undefined,
+      requestedBy: requestedBy ? assertObjectId(String(requestedBy), "VALIDATION_ERROR") : undefined,
       fromDate: fromDate,
       toDate: toDate,
     };
@@ -66,10 +67,7 @@ export async function listChangeRequestsHandler(req, res, next) {
 
 export async function getChangeRequestByIdHandler(req, res, next) {
   try {
-    const id = Number(req.params.id);
-    if (isNaN(id)) {
-      throw new HttpError(400, "Invalid change request ID", "VALIDATION_ERROR");
-    }
+    const id = assertObjectId(req.params.id, "VALIDATION_ERROR");
 
     const result = await getChangeRequestById(id);
     if (!result) {
@@ -96,10 +94,7 @@ export async function getChangeRequestByIdHandler(req, res, next) {
 
 export async function approveChangeRequestHandler(req, res, next) {
   try {
-    const id = Number(req.params.id);
-    if (isNaN(id)) {
-      throw new HttpError(400, "Invalid change request ID", "VALIDATION_ERROR");
-    }
+    const id = assertObjectId(req.params.id, "VALIDATION_ERROR");
 
     const result = await approveChangeRequest(
       id,
@@ -114,10 +109,7 @@ export async function approveChangeRequestHandler(req, res, next) {
 
 export async function rejectChangeRequestHandler(req, res, next) {
   try {
-    const id = Number(req.params.id);
-    if (isNaN(id)) {
-      throw new HttpError(400, "Invalid change request ID", "VALIDATION_ERROR");
-    }
+    const id = assertObjectId(req.params.id, "VALIDATION_ERROR");
 
     const { rejectionReason } = req.body;
     if (!rejectionReason) {
