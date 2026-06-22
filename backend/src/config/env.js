@@ -68,7 +68,7 @@ export const env = {
   databaseUrl: databaseUrlFromEnv(),
   jwtAccessSecret: required("JWT_ACCESS_SECRET"),
   jwtAccessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "10h",
-  refreshTokenDays: numberFromEnv("REFRESH_TOKEN_DAYS", 60),
+  refreshTokenDays: numberFromEnv("REFRESH_TOKEN_DAYS", 3650),
   refreshCookieName: process.env.REFRESH_COOKIE_NAME || "quality_mobiles_refresh",
   cookieSecure: process.env.COOKIE_SECURE
     ? process.env.COOKIE_SECURE === "true"

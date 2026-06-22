@@ -26,8 +26,6 @@ const App: React.FC = () => {
     }
   });
   const [stores, setStores] = useState<ApiStore[]>([]);
-  const [showSessionWarning, setShowSessionWarning] = useState(false);
-
   const refreshStores = async () => {
     try {
       const data = await listStores();
@@ -84,7 +82,7 @@ const App: React.FC = () => {
     try {
       const payload = JSON.parse(atob(token.split('.')[1])) as { exp?: number };
       const refreshIn = Math.max(5_000, Number(payload.exp || 0) * 1000 - Date.now() - 5 * 60 * 1000);
-      const timer = window.setTimeout(() => void refreshSession(), refreshIn);
+      const timer = window.setTimeout(() => void refreshSession(true), refreshIn);
       return () => window.clearTimeout(timer);
     } catch {
       return;
@@ -97,9 +95,12 @@ const App: React.FC = () => {
         setUser(getSessionUser() as User | null);
       }
     };
-    const onWarning = () => setShowSessionWarning(true);
+    const onWarning = () => {
+      clearAuthToken();
+      clearSessionUser();
+      setUser(null);
+    };
     const onRenewed = () => {
-      setShowSessionWarning(false);
       setUser(getSessionUser() as User | null);
     };
     window.addEventListener('storage', onStorage);
@@ -126,7 +127,6 @@ const App: React.FC = () => {
     clearAuthToken();
     clearSessionUser();
     setUser(null);
-    setShowSessionWarning(false);
   };
 
   const handleStoreChange = (store: ApiStore | { id: string, name: string }) => {
@@ -141,14 +141,6 @@ const App: React.FC = () => {
       clearAuthToken();
       clearSessionUser();
       setUser(null);
-      setShowSessionWarning(false);
-    }
-  };
-
-  const continueSession = async () => {
-    if (await refreshSession()) {
-      setShowSessionWarning(false);
-      setUser(getSessionUser() as User | null);
     }
   };
 
@@ -160,18 +152,6 @@ const App: React.FC = () => {
 
   return (
     <Router>
-      {showSessionWarning && (
-        <div className="session-warning-backdrop" role="dialog" aria-modal="true">
-          <div className="session-warning">
-            <h2>Your session will expire soon</h2>
-            <p>Continue to stay signed in without losing your current work.</p>
-            <div>
-              <button type="button" onClick={handleLogout}>Logout</button>
-              <button type="button" className="primary" onClick={continueSession}>Continue Session</button>
-            </div>
-          </div>
-        </div>
-      )}
       {!user ? (
         <Routes>
           <Route path="/login" element={<Login onLogin={handleLogin} />} />
