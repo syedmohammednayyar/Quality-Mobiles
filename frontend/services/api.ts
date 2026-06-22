@@ -164,6 +164,26 @@ export interface ApiSaleItem {
   product_name?: string;
   brand?: string;
   imei?: string;
+  // enterprise price-adjustment fields (returned by listSales / getSaleById)
+  price_was_adjusted?: boolean;
+  adjustment_delta?: string;
+  adjustment_reason?: string | null;
+  // fields sent on create (used by POS)
+  adjustedUnitPrice?: number;
+  adjustmentReason?: string;
+  adjustmentCategory?: string;
+}
+
+export interface ApiExchangeDevice {
+  brand: string;
+  model: string;
+  imei?: string;
+  storageCapacity?: string;
+  color?: string;
+  condition?: "excellent" | "good" | "fair" | "poor" | "broken";
+  conditionNotes?: string;
+  marketValue?: number;
+  exchangeValue: number;
 }
 
 export interface ApiSale {
@@ -194,6 +214,11 @@ export interface ApiSale {
   employee_name?: string;
   payment_method?: string;
   sale_status?: "completed" | "draft" | "cancelled";
+  // enterprise amount breakdown
+  original_amount?: string;
+  adjusted_amount?: string;
+  price_adjustment_total?: string;
+  exchange_total?: string;
 }
 
 export type BuybackWorkflowStatus =
@@ -432,6 +457,7 @@ export interface CreateSalePayload {
   payment_method?: "cash" | "card" | "bank_transfer" | "upi";
   notes: string;
   items: ApiSaleItem[];
+  exchange_devices?: ApiExchangeDevice[];
 }
 
 export interface JobLookupResponse {
@@ -693,6 +719,12 @@ type BackendSale = {
   exchangeTotal?: string | number;
   grand_total: string;
   grandTotal?: string | number;
+  original_amount?: string | number;
+  originalAmount?: string | number;
+  adjusted_amount?: string | number;
+  adjustedAmount?: string | number;
+  price_adjustment_total?: string | number;
+  priceAdjustmentTotal?: string | number;
   amount_paid: string;
   payment_status: "pending" | "partial" | "paid";
   paymentStatus?: "pending" | "partial" | "paid";
@@ -725,6 +757,10 @@ type BackendSaleItem = {
   unitPrice?: string | number;
   original_price?: string | number;
   originalPrice?: string | number;
+  adjustedUnitPrice?: string | number;
+  priceWasAdjusted?: boolean;
+  adjustmentReason?: string | null;
+  lineAdjustmentDelta?: string | number;
   line_total: string;
   lineTotal?: string | number;
 };
@@ -1070,13 +1106,20 @@ function mapSaleDetailToApiSale(detail: BackendSaleDetailResponse): ApiSale {
       id: String(item.id),
       product: String(item.product_id ?? item.product),
       quantity: item.quantity,
-      unit_price: toMoney(item.unit_price ?? item.unitPrice),
+      unit_price: toMoney(item.adjustedUnitPrice ?? item.unit_price ?? item.unitPrice),
       original_price: item.original_price != null || item.originalPrice != null
         ? toMoney(item.original_price ?? item.originalPrice)
         : undefined,
       line_total: toMoney(item.line_total ?? item.lineTotal),
+      price_was_adjusted: Boolean(item.priceWasAdjusted),
+      adjustment_delta: item.lineAdjustmentDelta != null ? toMoney(item.lineAdjustmentDelta) : undefined,
+      adjustment_reason: item.adjustmentReason ?? null,
     })),
     total_amount: toMoney(detail.sale.grand_total ?? detail.sale.grandTotal),
+    original_amount: toMoney(detail.sale.original_amount ?? detail.sale.originalAmount),
+    adjusted_amount: toMoney(detail.sale.adjusted_amount ?? detail.sale.adjustedAmount),
+    price_adjustment_total: toMoney(detail.sale.price_adjustment_total ?? detail.sale.priceAdjustmentTotal),
+    exchange_total: toMoney(detail.sale.exchange_total ?? detail.sale.exchangeTotal),
     payment_status: detail.sale.payment_status || detail.sale.paymentStatus,
   };
 }
@@ -1592,10 +1635,16 @@ export async function createSale(payload: CreateSalePayload): Promise<ApiSale> {
       referralNotes: payload.referral_notes || undefined,
       note: payload.notes,
       items: payload.items.map((item) => ({
-        productId: item.product,
-        quantity: item.quantity,
-        unitPrice: toNumber(item.unit_price),
+        productId:          item.product,
+        quantity:           item.quantity,
+        unitPrice:          toNumber(item.unit_price),
+        adjustedUnitPrice:  item.adjustedUnitPrice !== undefined ? item.adjustedUnitPrice : toNumber(item.unit_price),
+        adjustmentReason:   item.adjustmentReason   || undefined,
+        adjustmentCategory: item.adjustmentCategory || undefined,
       })),
+      exchangeDevices: payload.exchange_devices && payload.exchange_devices.length > 0
+        ? payload.exchange_devices
+        : undefined,
       payments: buildPayments(payload),
     }),
   });

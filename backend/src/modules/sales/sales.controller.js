@@ -42,12 +42,30 @@ const createSaleSchema = z.object({
   items: z
     .array(
       z.object({
-        productId: objectIdSchema,
-        quantity: z.number().int().positive(),
-        unitPrice: z.number().min(0).optional(),
+        productId:          objectIdSchema,
+        quantity:           z.number().int().positive(),
+        unitPrice:          z.number().min(0).optional(),
+        adjustedUnitPrice:  z.number().min(0).optional(),
+        adjustmentReason:   z.string().max(500).optional(),
+        adjustmentCategory: z.enum(["negotiation", "loyalty_discount", "damage", "bulk", "promotion", "manager_override", "other"]).optional(),
       }),
     )
     .min(1),
+  exchangeDevices: z
+    .array(
+      z.object({
+        brand:           z.string().max(100),
+        model:           z.string().max(150),
+        imei:            z.string().max(50).optional(),
+        storageCapacity: z.string().max(50).optional(),
+        color:           z.string().max(80).optional(),
+        condition:       z.enum(["excellent", "good", "fair", "poor", "broken"]).default("good"),
+        conditionNotes:  z.string().max(500).optional(),
+        marketValue:     z.number().min(0).optional(),
+        exchangeValue:   z.number().min(0),
+      }),
+    )
+    .optional(),
   payments: z
     .array(
       z.object({

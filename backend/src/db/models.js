@@ -53,6 +53,10 @@ const customerSchema = new mongoose.Schema({
   sourceType: { type: String, enum: ["walk_in", "referred"], default: "walk_in" },
   referredByEmployee: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
   sourceNotes: String,
+  lifetimeValue:         { type: Number, default: 0 },
+  totalPurchaseCount:    { type: Number, default: 0 },
+  totalExchangeValue:    { type: Number, default: 0 },
+  totalPriceAdjustments: { type: Number, default: 0 },
 }, { timestamps: true });
 
 const productSchema = new mongoose.Schema({
@@ -202,28 +206,47 @@ const saleSchema = new mongoose.Schema({
   customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
   employee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true },
   status: { type: String, default: 'completed', enum: ['draft', 'completed', 'cancelled'] },
-  subtotal: { type: Number, required: true, min: 0 },
-  taxTotal: { type: Number, required: true, min: 0 },
-  discountTotal: { type: Number, default: 0, min: 0 },
-  exchangeTotal: { type: Number, default: 0, min: 0 },
-  grandTotal: { type: Number, required: true, min: 0 },
-  amountPaid: { type: Number, default: 0, min: 0 },
-  paymentStatus: { type: String, default: 'pending', enum: ['pending', 'partial', 'paid'] },
+
+  // Gross amounts (original prices before any adjustment)
+  originalAmount:        { type: Number, default: 0, min: 0 },
+  // Net amounts after employee adjustments
+  adjustedAmount:        { type: Number, default: 0, min: 0 },
+  priceAdjustmentTotal:  { type: Number, default: 0, min: 0 },
+
+  subtotal:     { type: Number, required: true, min: 0 },
+  taxTotal:     { type: Number, required: true, min: 0 },
+  discountTotal:{ type: Number, default: 0, min: 0 },
+  exchangeTotal:{ type: Number, default: 0, min: 0 },
+  grandTotal:   { type: Number, required: true, min: 0 },
+  amountPaid:   { type: Number, default: 0, min: 0 },
+  paymentStatus:{ type: String, default: 'pending', enum: ['pending', 'partial', 'paid'] },
+
   items: [{
-    product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
-    quantity: { type: Number, required: true, min: 1 },
-    unitPrice: { type: Number, required: true, min: 0 },
-    originalPrice: { type: Number, default: 0 },
-    taxRate: { type: Number, default: 0 },
-    taxAmount: { type: Number, default: 0 },
-    discountAmount: { type: Number, default: 0 },
-    lineTotal: { type: Number, required: true, min: 0 },
+    product:            { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
+    quantity:           { type: Number, required: true, min: 1 },
+    // Snapshot of original product price at time of sale — NEVER changes after creation
+    originalUnitPrice:  { type: Number, required: true, min: 0 },
+    // What was actually charged (equals originalUnitPrice unless employee adjusted)
+    adjustedUnitPrice:  { type: Number, required: true, min: 0 },
+    priceWasAdjusted:   { type: Boolean, default: false },
+    adjustmentReason:   String,
+    adjustmentCategory: String,
+    // Legacy field kept for backward compat
+    unitPrice:          { type: Number, required: true, min: 0 },
+    originalPrice:      { type: Number, default: 0 },
+    lineOriginalTotal:  { type: Number, default: 0, min: 0 },
+    lineAdjustedTotal:  { type: Number, default: 0, min: 0 },
+    lineAdjustmentDelta:{ type: Number, default: 0 },
+    taxRate:            { type: Number, default: 0 },
+    taxAmount:          { type: Number, default: 0 },
+    discountAmount:     { type: Number, default: 0 },
+    lineTotal:          { type: Number, required: true, min: 0 },
   }],
   payments: [{
-    paymentMethod: { 
-      type: String, 
-      required: true, 
-      enum: ['cash', 'card', 'bank_transfer', 'upi', 'wallet', 'mixed'] 
+    paymentMethod: {
+      type: String,
+      required: true,
+      enum: ['cash', 'card', 'bank_transfer', 'upi', 'wallet', 'mixed'],
     },
     status: { type: String, required: true, enum: ['pending', 'partial', 'paid', 'failed', 'refunded'] },
     amount: { type: Number, required: true, min: 0 },
@@ -235,22 +258,76 @@ const saleSchema = new mongoose.Schema({
   note: String,
   jobNumber: String,
   icNumber: String,
-  cashAmount: { type: Number, default: 0, min: 0 },
-  onlineAmount: { type: Number, default: 0, min: 0 },
+  cashAmount:    { type: Number, default: 0, min: 0 },
+  onlineAmount:  { type: Number, default: 0, min: 0 },
   exchangeModel: String,
-  gotAmount: { type: Number, default: 0, min: 0 },
+  gotAmount:     { type: Number, default: 0, min: 0 },
   gift: String,
   salespersonName: String,
-  attendedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
-  customerSource: { type: String, enum: ["walk_in", "referred"], default: "walk_in" },
-  referredByEmployee: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
+  attendedBy:          { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
+  customerSource:      { type: String, enum: ["walk_in", "referred"], default: "walk_in" },
+  referredByEmployee:  { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
   referralNotes: String,
-  icLocked: { type: Boolean, default: false },
+  icLocked:      { type: Boolean, default: false },
   transactionDate: { type: Date, default: Date.now },
 }, { timestamps: true });
 
 saleSchema.index({ store: 1, createdAt: -1 });
 saleSchema.index({ saleNo: 1, jobNumber: 1 });
+saleSchema.index({ customer: 1, createdAt: -1 });
+
+// ─── Price Adjustment ────────────────────────────────────────────────────────
+const priceAdjustmentSchema = new mongoose.Schema({
+  sale:             { type: mongoose.Schema.Types.ObjectId, ref: 'Sale', required: true },
+  saleItemId:       mongoose.Schema.Types.ObjectId,
+  product:          { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
+  employee:         { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true },
+  store:            { type: mongoose.Schema.Types.ObjectId, ref: 'Store', required: true },
+  originalPrice:    { type: Number, required: true },
+  newPrice:         { type: Number, required: true },
+  differenceAmount: { type: Number, required: true },
+  differencePercent:{ type: Number, required: true },
+  reasonCategory: {
+    type: String,
+    enum: ['negotiation', 'loyalty_discount', 'damage', 'bulk', 'promotion', 'manager_override', 'other'],
+    default: 'negotiation',
+  },
+  reasonNote: { type: String, maxlength: 300 },
+  approvedBy:   { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+}, { timestamps: true });
+priceAdjustmentSchema.index({ sale: 1 });
+priceAdjustmentSchema.index({ employee: 1, createdAt: -1 });
+priceAdjustmentSchema.index({ store: 1, createdAt: -1 });
+
+// ─── Exchange Device (trade-in) ──────────────────────────────────────────────
+const exchangeDeviceSchema = new mongoose.Schema({
+  sale:           { type: mongoose.Schema.Types.ObjectId, ref: 'Sale', required: true },
+  customer:       { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
+  store:          { type: mongoose.Schema.Types.ObjectId, ref: 'Store', required: true },
+  employee:       { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true },
+  brand:          { type: String, required: true },
+  model:          { type: String, required: true },
+  imei:           String,
+  storageCapacity:String,
+  color:          String,
+  condition: {
+    type: String,
+    enum: ['excellent', 'good', 'fair', 'poor', 'broken'],
+    default: 'good',
+  },
+  conditionNotes: String,
+  marketValue:    { type: Number, default: 0 },
+  exchangeValue:  { type: Number, required: true, min: 0 },
+  buybackRef:     { type: mongoose.Schema.Types.ObjectId, ref: 'Buyback' },
+  buybackStatus: {
+    type: String,
+    enum: ['pending', 'received', 'in_inventory', 'refurbishing', 'resold'],
+    default: 'received',
+  },
+}, { timestamps: true });
+exchangeDeviceSchema.index({ sale: 1 });
+exchangeDeviceSchema.index({ store: 1, createdAt: -1 });
+exchangeDeviceSchema.index({ imei: 1, sparse: true });
 
 const buybackSchema = new mongoose.Schema({
   imei: { type: String, required: true, unique: true },
@@ -353,15 +430,24 @@ const giftTransactionSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const auditLogSchema = new mongoose.Schema({
-  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  action: { type: String, required: true },
+  user:       { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  employee:   { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+  store:      { type: mongoose.Schema.Types.ObjectId, ref: 'Store' },
+  action:     { type: String, required: true },
   entityType: String,
-  entityId: mongoose.Schema.Types.Mixed,
-  oldValues: mongoose.Schema.Types.Mixed,
-  newValues: mongoose.Schema.Types.Mixed,
-  status: { type: String, enum: ['success', 'failure'] },
-  notes: String,
+  entityId:   mongoose.Schema.Types.Mixed,
+  fieldName:  String,
+  oldValue:   mongoose.Schema.Types.Mixed,
+  newValue:   mongoose.Schema.Types.Mixed,
+  oldValues:  mongoose.Schema.Types.Mixed,
+  newValues:  mongoose.Schema.Types.Mixed,
+  metadata:   mongoose.Schema.Types.Mixed,
+  status:     { type: String, enum: ['success', 'failure'] },
+  notes:      String,
 }, { timestamps: true });
+auditLogSchema.index({ entityType: 1, entityId: 1 });
+auditLogSchema.index({ store: 1, createdAt: -1 });
+auditLogSchema.index({ action: 1, createdAt: -1 });
 
 const exportLogSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -452,6 +538,8 @@ export const ChangeRequest = mongoose.model('ChangeRequest', changeRequestSchema
 export const Notification = mongoose.model('Notification', notificationSchema);
 export const GiftTransaction = mongoose.model('GiftTransaction', giftTransactionSchema);
 export const AuditLog = mongoose.model('AuditLog', auditLogSchema);
+export const PriceAdjustment = mongoose.model('PriceAdjustment', priceAdjustmentSchema);
+export const ExchangeDevice = mongoose.model('ExchangeDevice', exchangeDeviceSchema);
 export const ExportLog = mongoose.model('ExportLog', exportLogSchema);
 export const StoreManagerAssignment = mongoose.model('StoreManagerAssignment', storeManagerAssignmentSchema);
 export const EmployeeStoreAssignment = mongoose.model("EmployeeStoreAssignment", employeeStoreAssignmentSchema);
