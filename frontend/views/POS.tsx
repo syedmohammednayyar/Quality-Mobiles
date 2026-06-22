@@ -26,7 +26,7 @@ type PosProduct = {
   productType: string;
 };
 
-type PosCartItem = PosProduct;
+type PosCartItem = PosProduct & { customPrice?: number };
 
 const paymentMethods: PaymentMethod[] = ['Cash', 'UPI', 'Card', 'Bank Transfer'];
 const POS_DRAFT_KEY = 'quality-mobiles-pos-draft';
@@ -151,7 +151,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
     return products.slice(0, 100);
   }, [products]);
 
-  const subtotal = useMemo(() => cart.reduce((sum, item) => sum + item.price, 0), [cart]);
+  const subtotal = useMemo(() => cart.reduce((sum, item) => sum + (item.customPrice ?? item.price), 0), [cart]);
   const finalAmount = Math.max(0, subtotal - discount);
 
   const addToCart = (product: PosProduct) => {
@@ -167,6 +167,10 @@ const POS: React.FC<POSProps> = ({ user }) => {
 
   const removeFromCart = (productId: string) => {
     setCart((prev) => prev.filter((item) => item.id !== productId));
+  };
+
+  const updateCartPrice = (productId: string, price: number) => {
+    setCart((prev) => prev.map((item) => item.id === productId ? { ...item, customPrice: price } : item));
   };
 
   const clearBill = () => {
@@ -238,7 +242,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
         items: cart.map((item) => ({
           product: item.productId,
           quantity: 1,
-          unit_price: item.price.toFixed(2),
+          unit_price: (item.customPrice ?? item.price).toFixed(2),
         })),
       });
 
@@ -338,7 +342,16 @@ const POS: React.FC<POSProps> = ({ user }) => {
                   <strong>{item.name}</strong>
                   <span>{item.jobNo} | {item.storage} | {item.network}</span>
                 </div>
-                <b>Rs {toMoney(item.price)}</b>
+                <div className="pos-cart-price-wrap">
+                  <span className="pos-cart-price-label">Sale Price</span>
+                  <input
+                    type="number"
+                    min="0"
+                    className="pos-cart-price-input"
+                    value={item.customPrice ?? item.price}
+                    onChange={(e) => updateCartPrice(item.id, Number(e.target.value || 0))}
+                  />
+                </div>
                 <button type="button" onClick={() => removeFromCart(item.id)} aria-label="Remove item">
                   <span className="material-icons">close</span>
                 </button>

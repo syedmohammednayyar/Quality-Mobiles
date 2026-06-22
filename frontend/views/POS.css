@@ -245,10 +245,38 @@
   font-weight: 700;
 }
 
-.pos-cart-row b {
-  color: var(--color-primary-600);
+.pos-cart-price-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.pos-cart-price-label {
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pos-cart-price-input {
+  width: 110px;
+  padding: 5px 8px;
+  border: 1.5px solid var(--color-primary-400);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--color-primary-700);
+  font: inherit;
   font-size: 13px;
-  white-space: nowrap;
+  font-weight: 900;
+  text-align: right;
+  outline: none;
+}
+
+.pos-cart-price-input:focus {
+  border-color: var(--color-primary-600);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary-200) 55%, transparent);
 }
 
 .pos-cart-row button {

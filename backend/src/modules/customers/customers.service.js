@@ -51,25 +51,14 @@ export async function createCustomer(input) {
       await requireStore(input.storeRef);
     }
 
-    try {
-      const [customer] = await Customer.create([{
-        fullName: name,
-        email,
-        phone,
-        store: input.storeRef || null,
-      }], { session });
+    const [customer] = await Customer.create([{
+      fullName: name,
+      email,
+      phone,
+      store: input.storeRef || null,
+    }], { session });
 
-      return mapCustomer(customer);
-    } catch (error) {
-      if (error.code === 11000) {
-        throw new HttpError(
-          409,
-          "Customer phone or email already exists",
-          "CUSTOMER_DUPLICATE",
-        );
-      }
-      throw error;
-    }
+    return mapCustomer(customer);
   });
 }
 
@@ -107,19 +96,8 @@ export async function updateCustomer(customerId, input) {
       customer.store = input.storeRef || null;
     }
 
-    try {
-      await customer.save({ session });
-      return mapCustomer(customer);
-    } catch (error) {
-      if (error.code === 11000) {
-        throw new HttpError(
-          409,
-          "Customer phone or email already exists",
-          "CUSTOMER_DUPLICATE",
-        );
-      }
-      throw error;
-    }
+    await customer.save({ session });
+    return mapCustomer(customer);
   });
 }
 

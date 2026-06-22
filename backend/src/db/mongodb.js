@@ -5,6 +5,10 @@ export async function connectDB() {
   try {
     await mongoose.connect(env.databaseUrl);
     console.log("MongoDB connected successfully");
+    // Drop legacy unique indexes on customer phone/email so repeat customers are allowed
+    const col = mongoose.connection.db.collection('customers');
+    await col.dropIndex({ phone: 1 }).catch(() => {});
+    await col.dropIndex({ email: 1 }).catch(() => {});
   } catch (error) {
     console.error("MongoDB connection error:", error);
     process.exit(1);

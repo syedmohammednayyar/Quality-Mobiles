@@ -48,8 +48,8 @@ const employeeSchema = new mongoose.Schema({
 const customerSchema = new mongoose.Schema({
   store: { type: mongoose.Schema.Types.ObjectId, ref: 'Store' },
   fullName: { type: String, required: true },
-  phone: { type: String, sparse: true, unique: true },
-  email: { type: String, sparse: true, unique: true, lowercase: true },
+  phone: { type: String },
+  email: { type: String, lowercase: true },
   sourceType: { type: String, enum: ["walk_in", "referred"], default: "walk_in" },
   referredByEmployee: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
   sourceNotes: String,
