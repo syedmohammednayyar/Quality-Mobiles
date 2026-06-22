@@ -44,6 +44,7 @@ const createSaleSchema = z.object({
       z.object({
         productId: objectIdSchema,
         quantity: z.number().int().positive(),
+        unitPrice: z.number().min(0).optional(),
       }),
     )
     .min(1),

@@ -116,7 +116,7 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                 <td>{sale.payment_method || '-'}</td>
                 <td>
                   <strong>Rs {Number(item.line_total || item.unit_price || 0).toLocaleString()}</strong>
-                  {item.original_price && Number(item.original_price) !== Number(item.unit_price) && (
+                  {Number(item.original_price) > 0 && Number(item.original_price) !== Number(item.unit_price) && (
                     <span className="sales-list-price">List: Rs {Number(item.original_price).toLocaleString()}</span>
                   )}
                 </td>
