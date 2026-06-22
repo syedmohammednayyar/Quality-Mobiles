@@ -158,6 +158,7 @@ export interface ApiSaleItem {
   product: string;
   quantity: number;
   unit_price: string;
+  original_price?: string;
   line_total?: string;
   job_no?: string;
   product_name?: string;
@@ -722,6 +723,8 @@ type BackendSaleItem = {
   quantity: number;
   unit_price: string;
   unitPrice?: string | number;
+  original_price?: string | number;
+  originalPrice?: string | number;
   line_total: string;
   lineTotal?: string | number;
 };
@@ -1068,6 +1071,9 @@ function mapSaleDetailToApiSale(detail: BackendSaleDetailResponse): ApiSale {
       product: String(item.product_id ?? item.product),
       quantity: item.quantity,
       unit_price: toMoney(item.unit_price ?? item.unitPrice),
+      original_price: item.original_price != null || item.originalPrice != null
+        ? toMoney(item.original_price ?? item.originalPrice)
+        : undefined,
       line_total: toMoney(item.line_total ?? item.lineTotal),
     })),
     total_amount: toMoney(detail.sale.grand_total ?? detail.sale.grandTotal),
@@ -1588,6 +1594,7 @@ export async function createSale(payload: CreateSalePayload): Promise<ApiSale> {
       items: payload.items.map((item) => ({
         productId: item.product,
         quantity: item.quantity,
+        unitPrice: toNumber(item.unit_price),
       })),
       payments: buildPayments(payload),
     }),

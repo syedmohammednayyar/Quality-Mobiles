@@ -114,7 +114,12 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                 <td>{sale.store_name || '-'}</td>
                 <td>{sale.employee_name || sale.salesperson_name || '-'}</td>
                 <td>{sale.payment_method || '-'}</td>
-                <td><strong>Rs {Number(item.line_total || item.unit_price || 0).toLocaleString()}</strong></td>
+                <td>
+                  <strong>Rs {Number(item.line_total || item.unit_price || 0).toLocaleString()}</strong>
+                  {item.original_price && Number(item.original_price) !== Number(item.unit_price) && (
+                    <span className="sales-list-price">List: Rs {Number(item.original_price).toLocaleString()}</span>
+                  )}
+                </td>
                 <td>{new Date(sale.sold_at).toLocaleString()}</td>
                 <td><span className={`sales-status ${sale.payment_status || 'pending'}`}>{sale.payment_status || sale.sale_status || 'completed'}</span></td>
               </tr>

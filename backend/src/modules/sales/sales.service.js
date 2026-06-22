@@ -155,6 +155,14 @@ export async function createSale(input) {
       );
     }
 
+    // Build a map of employee-set billed prices keyed by productId
+    const billedPriceMap = new Map();
+    (input.items || []).forEach((item) => {
+      if (item.unitPrice != null && !isNaN(Number(item.unitPrice))) {
+        billedPriceMap.set(item.productId.toString(), Number(item.unitPrice));
+      }
+    });
+
     let subtotalCents = 0;
     let taxTotalCents = 0;
 
@@ -193,7 +201,9 @@ export async function createSale(input) {
         );
       }
 
-      const unitPriceCents = toCents(product.unitPrice);
+      const originalPriceCents = toCents(product.unitPrice);
+      const billedPrice = billedPriceMap.has(item.productId) ? billedPriceMap.get(item.productId) : product.unitPrice;
+      const unitPriceCents = toCents(billedPrice);
       const taxRate = Number(product.taxRate);
       const lineSubtotalCents = unitPriceCents * item.quantity;
       const lineTaxCents = Math.round((lineSubtotalCents * taxRate) / 100);
@@ -207,6 +217,7 @@ export async function createSale(input) {
         quantity: item.quantity,
         category: product.category,
         unitPrice: Number(centsToMoney(unitPriceCents)),
+        originalPrice: Number(centsToMoney(originalPriceCents)),
         taxRate,
         taxAmount: Number(centsToMoney(lineTaxCents)),
         discountAmount: 0,
@@ -429,6 +440,7 @@ export async function listSales(input) {
       imei: item.product?.imei || "",
       quantity: item.quantity,
       unit_price: Number(item.unitPrice || 0).toFixed(2),
+      original_price: Number(item.originalPrice || 0).toFixed(2),
       line_total: Number(item.lineTotal || 0).toFixed(2),
     })),
   }));
