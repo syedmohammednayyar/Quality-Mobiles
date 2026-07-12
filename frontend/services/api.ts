@@ -107,7 +107,7 @@ export interface ApiStoreInventoryRow {
   images?: string[];
   remarks?: string;
   device_notes?: string;
-  inventory_status?: "ready" | "repair" | "sold";
+  inventory_status?: "ready" | "under_repair" | "repair" | "sold";
   active?: boolean;
   updated_at: string;
 }
@@ -135,7 +135,7 @@ export interface CreateProductPayload {
   selling_price?: string;
   discount?: string;
   tax?: string;
-  inventory_status?: "ready" | "repair" | "sold";
+  inventory_status?: "ready" | "under_repair" | "repair" | "sold";
   inventory_mode?: "serialized" | "bulk";
   stock_quantity: number;
   min_stock_level?: number;
@@ -184,6 +184,8 @@ export interface ApiExchangeDevice {
   conditionNotes?: string;
   marketValue?: number;
   exchangeValue: number;
+  destinationStoreId?: string;
+  inventoryStatus?: "ready" | "under_repair";
 }
 
 export interface ApiSale {
@@ -285,6 +287,8 @@ export interface ApiBuyback {
   customer_phone?: string;
   store_ref?: string | null;
   store_name?: string;
+  destination_store_ref?: string | null;
+  transaction_type?: "direct" | "exchange";
   assigned_store_ref?: string | null;
   assigned_store_name?: string;
   assigned_technician?: string | null;
@@ -313,6 +317,10 @@ export interface ApiBuyback {
   resale_notes?: string;
   status: string;
   status_key: BuybackWorkflowStatus;
+  inventory_status?: "ready" | "under_repair";
+  linked_sale_id?: string | null;
+  linked_sale_no?: string;
+  linked_product_ids?: string[];
   inspection_completed_at?: string | null;
   approved_at?: string | null;
   rejected_at?: string | null;
@@ -473,9 +481,11 @@ export interface JobLookupResponse {
 export interface CreateBuybackPayload {
   imei: string;
   serial_number?: string;
+  transaction_type?: "direct" | "exchange";
   job_no?: string;
   customer: string;
   store_ref: string;
+  destination_store_ref?: string;
   assigned_store_ref?: string;
   assigned_technician?: string;
   brand: string;
@@ -510,6 +520,10 @@ export interface CreateBuybackPayload {
   pricing_notes?: string;
   repair_notes?: string;
   resale_notes?: string;
+  inventory_status?: "ready" | "under_repair";
+  linked_sale_id?: string;
+  linked_sale_no?: string;
+  linked_product_ids?: string[];
 }
 
 export interface CreateRepairPayload {
@@ -1688,6 +1702,8 @@ function normalizeBuybackRow(row: ApiBuyback): ApiBuyback {
     customer_phone: row.customer_phone || "",
     store_ref: row.store_ref === null || row.store_ref === undefined ? null : String(row.store_ref),
     store_name: row.store_name || "",
+    destination_store_ref: row.destination_store_ref === null || row.destination_store_ref === undefined ? null : String(row.destination_store_ref),
+    transaction_type: row.transaction_type || "direct",
     assigned_store_ref: row.assigned_store_ref === null || row.assigned_store_ref === undefined ? null : String(row.assigned_store_ref),
     assigned_store_name: row.assigned_store_name || "",
     assigned_technician: row.assigned_technician === null || row.assigned_technician === undefined ? null : String(row.assigned_technician),
@@ -1716,6 +1732,10 @@ function normalizeBuybackRow(row: ApiBuyback): ApiBuyback {
     resale_notes: row.resale_notes || "",
     status: row.status || "Pending Inspection",
     status_key: row.status_key || "pending_inspection",
+    inventory_status: row.inventory_status || "ready",
+    linked_sale_id: row.linked_sale_id === null || row.linked_sale_id === undefined ? null : String(row.linked_sale_id),
+    linked_sale_no: row.linked_sale_no || "",
+    linked_product_ids: row.linked_product_ids || [],
     inspection_completed_at: row.inspection_completed_at || null,
     approved_at: row.approved_at || null,
     rejected_at: row.rejected_at || null,
@@ -1776,12 +1796,17 @@ function toBuybackPayload(payload: Partial<CreateBuybackPayload> & { status?: Bu
     ...(payload.exchange_credit_enabled !== undefined ? { exchange_credit_enabled: payload.exchange_credit_enabled } : {}),
     ...(payload.payout_method !== undefined ? { payout_method: payload.payout_method } : {}),
     ...(payload.linked_sale_id !== undefined ? { linked_sale_id: payload.linked_sale_id } : {}),
+    ...(payload.linked_sale_no !== undefined ? { linkedSaleNo: payload.linked_sale_no } : {}),
+    ...(payload.linked_product_ids !== undefined ? { linkedProductIds: payload.linked_product_ids } : {}),
     ...(payload.rack_location !== undefined ? { rack_location: payload.rack_location } : {}),
     ...(payload.notes !== undefined ? { notes: payload.notes } : {}),
     ...(payload.inspection_notes !== undefined ? { inspection_notes: payload.inspection_notes } : {}),
     ...(payload.pricing_notes !== undefined ? { pricing_notes: payload.pricing_notes } : {}),
     ...(payload.repair_notes !== undefined ? { repair_notes: payload.repair_notes } : {}),
     ...(payload.resale_notes !== undefined ? { resale_notes: payload.resale_notes } : {}),
+    ...(payload.transaction_type !== undefined ? { transactionType: payload.transaction_type } : {}),
+    ...(payload.destination_store_ref !== undefined ? { destinationStoreRef: payload.destination_store_ref } : {}),
+    ...(payload.inventory_status !== undefined ? { inventoryStatus: payload.inventory_status } : {}),
     ...(payload.status !== undefined ? { status: payload.status } : {}),
   };
 }
@@ -2083,7 +2108,7 @@ function toCsv(headers: string[], rows: Array<Array<string | number | null | und
   return all.map((line) => line.join(",")).join("\n");
 }
 
-export async function downloadReportFile(params: ReportFilters, format: "csv" | "xlsx"): Promise<Blob> {
+export async function downloadReportFile(params: ReportFilters): Promise<Blob> {
   const data = await getReportData(params);
   let headers: string[] = [];
   let rows: Array<Array<string | number>> = [];
@@ -2097,11 +2122,6 @@ export async function downloadReportFile(params: ReportFilters, format: "csv" | 
   } else {
     headers = ["Store ID", "Store Name", "Transactions", "Units Sold", "Revenue"];
     rows = (data.rows as StoreReportRow[]).map((row) => [row.storeId ?? "", row.storeName, row.transactions, row.unitsSold, toMoney(row.revenue)]);
-  }
-
-  if (format === "xlsx") {
-    const tsv = [headers.join("\t"), ...rows.map((row) => row.join("\t"))].join("\n");
-    return new Blob([`\uFEFF${tsv}`], { type: "application/vnd.ms-excel;charset=utf-8;" });
   }
 
   const csv = toCsv(headers, rows);
@@ -2329,18 +2349,4 @@ export async function getAdminReportOverview(params: AdminOverviewFilters): Prom
 
 export async function getDashboardSummary(): Promise<DashboardSummary> {
   return apiRequest<DashboardSummary>("/dashboard/summary");
-}
-
-export async function exportAdminReportPdf(params: AdminOverviewFilters): Promise<Blob> {
-  const query = new URLSearchParams();
-  if (params.quickRange) query.set("quickRange", params.quickRange);
-  if (params.fromDate) query.set("fromDate", params.fromDate);
-  if (params.toDate) query.set("toDate", params.toDate);
-  if (params.storeIds?.length) query.set("storeIds", params.storeIds.join(","));
-  const token = getAuthToken();
-  const response = await fetch(`${API_BASE}/reports/admin/export/pdf?${query.toString()}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (!response.ok) throw new ApiError(response.status, "Failed to export PDF");
-  return response.blob();
 }

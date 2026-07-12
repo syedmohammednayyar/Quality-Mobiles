@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { exportAdminReportPdf, getAdminReportOverview, listStores, type ApiStore } from "../services/api";
+import { getAdminReportOverview, listStores, type ApiStore } from "../services/api";
 import type { User } from "../types";
 import "./Reports.css";
 
@@ -9,6 +9,13 @@ const tabs: Array<[Tab, string]> = [["stores", "Stores"], ["sales", "Sales"], ["
 const money = (value: unknown) => `Rs ${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 const pretty = (key: string) => key.replace(/([A-Z])/g, " $1").replace(/^./, (x) => x.toUpperCase());
 const display = (key: string, value: unknown) => /revenue|value|price|profit|amount|cost|spending|expenses|payments/i.test(key) ? money(value) : value ? String(value) : "-";
+const csvEscape = (value: unknown) => {
+  const text = String(value ?? "");
+  if (text.includes(",") || text.includes('"') || text.includes("\n")) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+};
 
 const Reports: React.FC<{ user: User }> = ({ user }) => {
   const [stores, setStores] = useState<ApiStore[]>([]);
@@ -19,7 +26,6 @@ const Reports: React.FC<{ user: User }> = ({ user }) => {
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<Tab>("stores");
   const [loading, setLoading] = useState(true);
-  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
   const [overview, setOverview] = useState<any>(null);
 
@@ -44,20 +50,16 @@ const Reports: React.FC<{ user: User }> = ({ user }) => {
     return query ? source.filter((row: any) => Object.values(row).some((value) => String(value || "").toLowerCase().includes(query))) : source;
   }, [overview, search, tab]);
 
-  const exportSheet = (excel = false) => {
+  const exportSheet = () => {
     if (!rows.length) return;
     const columns = Object.keys(rows[0]).filter((x) => x !== "id");
-    const csv = [columns.map(pretty), ...rows.map((row: any) => columns.map((key) => JSON.stringify(row[key] ?? "")))].map((line) => line.join(",")).join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: excel ? "application/vnd.ms-excel" : "text/csv" }));
-    const link = document.createElement("a"); link.href = url; link.download = `${tab}-report.${excel ? "xls" : "csv"}`; link.click(); URL.revokeObjectURL(url);
-  };
-  const exportPdf = async () => {
-    try { setExporting(true); const blob = await exportAdminReportPdf(filters); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = "business-control-report.pdf"; link.click(); URL.revokeObjectURL(url); }
-    finally { setExporting(false); }
+    const csv = [columns.map(pretty), ...rows.map((row: any) => columns.map((key) => csvEscape(row[key] ?? "")))].map((line) => line.join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" }));
+    const link = document.createElement("a"); link.href = url; link.download = `${tab}-report.csv`; link.click(); URL.revokeObjectURL(url);
   };
 
   return <div className="reports-page">
-    <header className="reports-topbar"><div><h1>Business Control Center</h1><p>{user.role === "Admin" ? "Complete visibility across every Quality Mobiles store." : "Performance and operations for your assigned store."}</p></div><div className="reports-export"><button onClick={() => exportSheet()}>Export CSV</button><button onClick={() => exportSheet(true)}>Export Excel</button><button onClick={() => window.print()}>Print</button><button className="primary" onClick={exportPdf} disabled={exporting}>{exporting ? "Preparing..." : "Export PDF"}</button></div></header>
+    <header className="reports-topbar"><div><h1>Business Control Center</h1><p>{user.role === "Admin" ? "Complete visibility across every Quality Mobiles store." : "Performance and operations for your assigned store."}</p></div><div className="reports-export"><button onClick={() => exportSheet()}>Export CSV</button><button onClick={() => window.print()}>Print</button></div></header>
     <section className="reports-filters">
       <label><span>Store</span><select value={user.role === "Manager" ? user.assignedStoreId : selectedStore} onChange={(e) => setSelectedStore(e.target.value)} disabled={user.role === "Manager"}><option value="">All Stores</option>{stores.map((store) => <option value={store.id} key={store.id}>{store.name}</option>)}</select></label>
       <label><span>Date Range</span><select value={quickRange} onChange={(e) => setQuickRange(e.target.value)}><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="this_week">This Week</option><option value="this_month">This Month</option><option value="this_year">This Year</option><option value="custom">Custom</option></select></label>

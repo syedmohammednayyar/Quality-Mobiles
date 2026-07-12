@@ -119,7 +119,7 @@ export async function listStoreInventory(storeId, options = {}) {
     Product.find({ isActive: true }).sort({ name: 1 }),
     BulkInventory.find({ store: store._id }).lean(),
     SerializedInventory.aggregate([
-      { $match: { store: store._id, status: "in_stock" } },
+      { $match: { store: store._id, status: { $in: ["in_stock", "buyback_hold", "under_repair"] } } },
       {
         $group: {
           _id: "$product",

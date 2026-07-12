@@ -84,8 +84,8 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
   return (
     <div className="sales-page">
       <header className="sales-header">
-        <div><h1>Sales History</h1><p>{filteredRows.length} sold products | {user.role}</p></div>
-        <strong>Rs {filteredRows.reduce((sum, row) => sum + Number(row.item.line_total || row.item.unit_price || 0), 0).toLocaleString()}</strong>
+        <div><h1>Sales History</h1><p>{filteredRows.length} sold products | exchange and adjustments shown separately</p></div>
+        <strong>Rs {filteredRows.reduce((sum, row) => sum + Number(row.sale.total_amount || row.item.line_total || row.item.unit_price || 0), 0).toLocaleString()}</strong>
       </header>
 
       <section className="sales-filters">
@@ -102,7 +102,7 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
 
       <section className="sales-table-wrap">
         <table className="sales-table-modern">
-          <thead><tr><th>Sale ID</th><th>Job Number</th><th>Product</th><th>IMEI</th><th>Customer</th><th>Store</th><th>Employee</th><th>Payment</th><th>Amount</th><th>Sale Date</th><th>Status</th></tr></thead>
+          <thead><tr><th>Sale ID</th><th>Job Number</th><th>Product</th><th>IMEI</th><th>Customer</th><th>Store</th><th>Employee</th><th>Price Breakdown</th><th>Payment</th><th>Sale Date</th><th>Status</th></tr></thead>
           <tbody>
             {filteredRows.map(({ key, sale, item }) => (
               <tr key={key}>
@@ -113,13 +113,13 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                 <td>{sale.customer_name || 'Walk-in'}</td>
                 <td>{sale.store_name || '-'}</td>
                 <td>{sale.employee_name || sale.salesperson_name || '-'}</td>
-                <td>{sale.payment_method || '-'}</td>
                 <td>
-                  <strong>Rs {Number(item.line_total || item.unit_price || 0).toLocaleString()}</strong>
-                  {Number(item.original_price) > 0 && Number(item.original_price) !== Number(item.unit_price) && (
-                    <span className="sales-list-price">List: Rs {Number(item.original_price).toLocaleString()}</span>
-                  )}
+                  <strong>Rs {Number(sale.original_amount || item.original_price || item.unit_price || 0).toLocaleString()}</strong>
+                  <span className="sales-list-price">Exchange: −Rs {Number(sale.exchange_total || 0).toLocaleString()}</span>
+                  <span className="sales-list-price">Other adj.: −Rs {Number(sale.price_adjustment_total || 0).toLocaleString()}</span>
+                  <span className="sales-list-price">Final: Rs {Number(sale.total_amount || item.line_total || item.unit_price || 0).toLocaleString()}</span>
                 </td>
+                <td>{sale.payment_method || '-'}</td>
                 <td>{new Date(sale.sold_at).toLocaleString()}</td>
                 <td><span className={`sales-status ${sale.payment_status || 'pending'}`}>{sale.payment_status || sale.sale_status || 'completed'}</span></td>
               </tr>

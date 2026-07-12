@@ -63,6 +63,8 @@ const createSaleSchema = z.object({
         conditionNotes:  z.string().max(500).optional(),
         marketValue:     z.number().min(0).optional(),
         exchangeValue:   z.number().min(0),
+        destinationStoreId: z.string().regex(/^[a-f\d]{24}$/i).optional(),
+        inventoryStatus: z.enum(["ready", "under_repair"]).optional(),
       }),
     )
     .optional(),

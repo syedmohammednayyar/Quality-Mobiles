@@ -92,7 +92,7 @@ const productSchema = new mongoose.Schema({
   images: [String],
   remarks: String,
   deviceNotes: String,
-  inventoryStatus: { type: String, enum: ["ready", "sold"], default: "ready", index: true },
+  inventoryStatus: { type: String, enum: ["ready", "under_repair", "sold"], default: "ready", index: true },
   inventoryMode: { type: String, enum: ["serialized", "bulk"], default: "bulk", index: true },
   isActive: { type: Boolean, default: true },
   isGift: { type: Boolean, default: false },
@@ -181,7 +181,7 @@ const serializedInventorySchema = new mongoose.Schema({
   store: { type: mongoose.Schema.Types.ObjectId, ref: "Store", required: true, index: true },
   status: {
     type: String,
-    enum: ["in_stock", "reserved", "sold", "transferred", "buyback_hold"],
+    enum: ["in_stock", "reserved", "sold", "transferred", "buyback_hold", "under_repair"],
     default: "in_stock",
     index: true,
   },
@@ -330,12 +330,15 @@ exchangeDeviceSchema.index({ store: 1, createdAt: -1 });
 exchangeDeviceSchema.index({ imei: 1, sparse: true });
 
 const buybackSchema = new mongoose.Schema({
-  imei: { type: String, required: true, unique: true },
+  transactionType: { type: String, default: 'direct', enum: ['direct', 'exchange'] },
+  imei: { type: String, unique: true, sparse: true, index: true },
+  serialNumber: { type: String, unique: true, sparse: true, index: true },
   brand: { type: String, required: true },
   model: { type: String, required: true },
   color: String,
   customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
   store: { type: mongoose.Schema.Types.ObjectId, ref: 'Store' },
+  destinationStore: { type: mongoose.Schema.Types.ObjectId, ref: 'Store' },
   jobNo: String,
   icNumber: String,
   cashAmount: { type: Number, default: 0, min: 0 },
@@ -356,6 +359,10 @@ const buybackSchema = new mongoose.Schema({
   negotiatedPrice: { type: Number, required: true, min: 0 },
   status: { type: String, default: 'pending', enum: ['pending', 'accepted', 'processed', 'rejected'] },
   inventoryProduct: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+  inventoryStatus: { type: String, enum: ['ready', 'under_repair'], default: 'ready' },
+  linkedSale: { type: mongoose.Schema.Types.ObjectId, ref: 'Sale' },
+  linkedSaleNo: String,
+  linkedProductIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }],
   notes: String,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });

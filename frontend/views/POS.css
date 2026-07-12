@@ -200,12 +200,22 @@
   background: color-mix(in srgb, var(--color-primary-50) 55%, var(--bg-primary));
 }
 
+.pos-product-blocked {
+  background: rgba(220, 38, 38, 0.08);
+  color: var(--color-danger-700);
+}
+
+.pos-product-blocked:hover {
+  background: rgba(220, 38, 38, 0.14);
+}
+
 .pos-empty {
   padding: 22px;
   text-align: center;
   color: var(--text-secondary);
   font-weight: 700;
 }
+.pos-status{display:inline-flex;padding:4px 8px;border-radius:999px;font-size:9px;font-weight:900;letter-spacing:0.04em;text-transform:uppercase}.pos-status.ready{background:var(--color-success-50);color:var(--color-success-700)}.pos-status.blocked{background:rgba(220,38,38,.12);color:var(--color-danger-700)}
 .pos-type{display:inline-flex;padding:4px 6px;border-radius:5px;font-size:9px;font-weight:900}.pos-type.new{background:var(--color-success-50);color:var(--color-success-600)}.pos-type.used{background:var(--color-warning-100);color:var(--color-warning-700)}
 
 .pos-cart-list {

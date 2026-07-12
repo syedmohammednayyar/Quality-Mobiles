@@ -238,7 +238,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
     }
   };
 
-  const inlineSave = async (row: ApiStoreInventoryRow, field: 'price', value: string) => {
+  const inlineSave = async (row: ApiStoreInventoryRow, field: 'price' | 'inventory_status', value: string) => {
     if (!isAdmin) return;
     const payload: Partial<CreateProductPayload> = {
       primary_store_ref: selectedStoreId,
@@ -247,6 +247,8 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
     };
     if (field === 'price') {
       payload.purchase_price = value;
+    } else if (field === 'inventory_status') {
+      payload.inventory_status = value as CreateProductPayload['inventory_status'];
     }
 
     try {
@@ -419,7 +421,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
               {[...new Set(rows.map((row) => row.brand).filter(Boolean))].sort().map((brand) => <option key={brand} value={brand}>{brand}</option>)}
             </select>
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-              <option value="all">All Statuses</option><option value="ready">Ready</option><option value="sold">Sold</option>
+              <option value="all">All Statuses</option><option value="ready">Ready for Sale</option><option value="under_repair">Under Repair</option><option value="sold">Sold</option>
             </select>
             <select value={sortKey} onChange={(event) => setSortKey(event.target.value as SortKey)}>
               <option value="updated">Recently Updated</option>
@@ -458,7 +460,17 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
                   <td><input className="inline-input money" defaultValue={row.purchase_price || row.final_price || row.unit_price} onBlur={(event) => void inlineSave(row, 'price', event.target.value)} disabled={!isAdmin} /></td>
                   <td><strong>Rs {toMoney(Number(row.selling_price || row.unit_price))}</strong></td>
                   <td><span className={row.category === 'used_phone' ? 'inventory-type used' : 'inventory-type new'}>{row.category === 'used_phone' ? 'USED PHONE' : 'NEW'}</span></td>
-                  <td><span className={`inventory-status ${row.inventory_status || 'ready'}`}>{row.inventory_status || 'ready'}</span></td>
+                  <td>
+                    {isAdmin ? (
+                      <select className="inline-input" value={row.inventory_status || 'ready'} onChange={(event) => void inlineSave(row, 'inventory_status', event.target.value)}>
+                        <option value="ready">Ready for Sale</option>
+                        <option value="under_repair">Under Repair</option>
+                        <option value="sold">Sold</option>
+                      </select>
+                    ) : (
+                      <span className={`inventory-status ${row.inventory_status || 'ready'}`}>{row.inventory_status || 'ready'}</span>
+                    )}
+                  </td>
                   <td>
                     <div className="inventory-row-actions">
                       <button className="btn btn-sm btn-secondary" onClick={() => void openDetails(row)}>Details</button>
@@ -497,7 +509,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
         <div className="inventory-detail-backdrop">
           <div className="inventory-detail-modal">
             <div className="inventory-modal-head"><div><h2>{detailRow.job_id}</h2><p>{detailRow.brand} {detailRow.model}</p></div><button onClick={() => setDetailRow(null)}>x</button></div>
-            <div className="inventory-detail-grid"><div><span>IMEI</span><strong>{detailRow.imei || '-'}</strong></div><div><span>Store</span><strong>{detailRow.store_name}</strong></div><div><span>Product Type</span><strong>{detailRow.category === 'used_phone' ? 'Used Phone (Buyback)' : 'New Phone'}</strong></div><div><span>Selling Price</span><strong>Rs {toMoney(detailRow.selling_price || detailRow.unit_price)}</strong></div></div>
+            <div className="inventory-detail-grid"><div><span>IMEI</span><strong>{detailRow.imei || '-'}</strong></div><div><span>Store</span><strong>{detailRow.store_name}</strong></div><div><span>Product Type</span><strong>{detailRow.category === 'used_phone' ? 'Used Phone (Buyback)' : 'New Phone'}</strong></div><div><span>Status</span><strong>{detailRow.inventory_status || 'ready'}</strong></div><div><span>Selling Price</span><strong>Rs {toMoney(detailRow.selling_price || detailRow.unit_price)}</strong></div></div>
             <h3>Transfer History</h3>
             <div className="inventory-history">{transferHistory.map((entry) => <div key={entry.id}><strong>{entry.from_store_name} to {entry.to_store_name}</strong><span>{new Date(entry.transferred_at).toLocaleString()} | {entry.transferred_by || 'System'} | {entry.remarks}</span></div>)}{transferHistory.length === 0 && <p>No transfer history.</p>}</div>
             <div className="inventory-modal-actions"><button className="btn btn-secondary" onClick={() => setDetailRow(null)}>Close</button>{(isAdmin || isManager) && detailRow.quantity > 0 && detailRow.inventory_status !== 'sold' && <button className="btn btn-primary" onClick={() => { setDetailRow(null); openTransfer(detailRow); }}>Transfer</button>}</div>

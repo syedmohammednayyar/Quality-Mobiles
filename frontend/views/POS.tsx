@@ -26,6 +26,7 @@ type PosProduct = {
   network: string;
   price: number;
   productType: string;
+  inventoryStatus: 'ready' | 'under_repair' | string;
 };
 
 type AdjustmentCategory =
@@ -50,6 +51,8 @@ type ExchangeDeviceEntry = {
   imei?: string;
   condition: 'excellent' | 'good' | 'fair' | 'poor' | 'broken';
   exchangeValue: number;
+  destinationStoreId: string;
+  inventoryStatus: 'ready' | 'under_repair';
 };
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -90,6 +93,7 @@ const mapProduct = (product: ApiStoreInventoryRow): PosProduct => {
     network: product.network_type || '-',
     price: Number(product.unit_price || product.final_price || 0),
     productType: product.category === 'used_phone' ? 'USED PHONE' : 'NEW',
+    inventoryStatus: product.inventory_status || 'ready',
   };
 };
 
@@ -179,7 +183,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
   const [exchangeDevices, setExchangeDevices] = useState<ExchangeDeviceEntry[]>([]);
   const [showExchangeForm, setShowExchangeForm] = useState(false);
   const [newDevice, setNewDevice] = useState<Omit<ExchangeDeviceEntry, 'localId'>>({
-    brand: '', model: '', imei: '', condition: 'good', exchangeValue: 0,
+    brand: '', model: '', imei: '', condition: 'good', exchangeValue: 0, destinationStoreId: '', inventoryStatus: 'ready',
   });
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -236,7 +240,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
     const loadProducts = async () => {
       try {
         const productRows = await listStoreInventory(currentStoreId, { search: debouncedSearch, limit: 100, offset: 0 });
-        setProducts(productRows.filter((p) => p.active !== false && p.quantity > 0 && p.inventory_status === 'ready').map(mapProduct));
+        setProducts(productRows.filter((p) => p.active !== false && p.quantity > 0 && (p.inventory_status === 'ready' || p.inventory_status === 'under_repair')).map(mapProduct));
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load store products');
       }
@@ -267,6 +271,10 @@ const POS: React.FC<POSProps> = ({ user }) => {
 
   // ── Cart mutations ──────────────────────────────────────────────────────
   const addToCart = (product: PosProduct) => {
+    if (product.inventoryStatus === 'under_repair') {
+      setError('Under Repair items cannot be sold until they are marked Ready for Sale.');
+      return;
+    }
     if (cart.some((item) => item.id === product.id)) {
       setError('This job number is already in the bill.');
       return;
@@ -302,7 +310,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
       return;
     }
     setExchangeDevices((prev) => [...prev, { ...newDevice, localId: `${Date.now()}-${Math.random()}` }]);
-    setNewDevice({ brand: '', model: '', imei: '', condition: 'good', exchangeValue: 0 });
+    setNewDevice({ brand: '', model: '', imei: '', condition: 'good', exchangeValue: 0, destinationStoreId: currentStoreId, inventoryStatus: 'ready' });
     setShowExchangeForm(false);
     setError('');
   };
@@ -316,7 +324,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
     setCart([]);
     setExchangeDevices([]);
     setShowExchangeForm(false);
-    setNewDevice({ brand: '', model: '', imei: '', condition: 'good', exchangeValue: 0 });
+    setNewDevice({ brand: '', model: '', imei: '', condition: 'good', exchangeValue: 0, destinationStoreId: currentStoreId, inventoryStatus: 'ready' });
     setCustomerName('');
     setCustomerPhone('');
     setDiscount(0);
@@ -387,12 +395,14 @@ const POS: React.FC<POSProps> = ({ user }) => {
               imei:          d.imei || undefined,
               condition:     d.condition,
               exchangeValue: d.exchangeValue,
+              destinationStoreId: d.destinationStoreId || currentStoreId,
+              inventoryStatus: d.inventoryStatus,
             }))
           : undefined,
       });
 
       const refreshedProducts = await listStoreInventory(currentStoreId, { search: debouncedSearch, limit: 100, offset: 0 });
-      setProducts(refreshedProducts.filter((p) => p.active !== false && p.quantity > 0 && p.inventory_status === 'ready').map(mapProduct));
+      setProducts(refreshedProducts.filter((p) => p.active !== false && p.quantity > 0 && (p.inventory_status === 'ready' || p.inventory_status === 'under_repair')).map(mapProduct));
       window.dispatchEvent(new CustomEvent('inventory:changed', { detail: { storeIds: [currentStoreId] } }));
       window.dispatchEvent(new CustomEvent('sales:changed', { detail: { storeId: currentStoreId, saleId: sale.id } }));
       setStatusMessage(`Bill processed: ${sale.sale_no || sale.id} | Rs ${toMoney(finalAmount)}`);
@@ -453,23 +463,30 @@ const POS: React.FC<POSProps> = ({ user }) => {
                   <th>Product</th>
                   <th>Storage</th>
                   <th>Network</th>
+                  <th>Status</th>
                   <th>Price</th>
                   <th>Type</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredProducts.map((product) => (
-                  <tr key={product.id} onClick={() => addToCart(product)}>
+                  <tr
+                    key={product.id}
+                    onClick={() => product.inventoryStatus === 'ready' ? addToCart(product) : undefined}
+                    className={product.inventoryStatus === 'under_repair' ? 'pos-product-blocked' : ''}
+                    title={product.inventoryStatus === 'under_repair' ? 'Under Repair items cannot be sold' : undefined}
+                  >
                     <td><strong>{product.jobNo}</strong></td>
                     <td>{product.name}</td>
                     <td>{product.storage}</td>
                     <td>{product.network}</td>
+                    <td><span className={`pos-status ${product.inventoryStatus === 'under_repair' ? 'blocked' : 'ready'}`}>{product.inventoryStatus === 'under_repair' ? 'Under Repair' : 'Ready for Sale'}</span></td>
                     <td>Rs {toMoney(product.price)}</td>
                     <td><span className={product.productType === 'USED PHONE' ? 'pos-type used' : 'pos-type new'}>{product.productType}</span></td>
                   </tr>
                 ))}
                 {filteredProducts.length === 0 && (
-                  <tr><td colSpan={6} className="pos-empty">No products found in this store.</td></tr>
+                  <tr><td colSpan={7} className="pos-empty">No products found in this store.</td></tr>
                 )}
               </tbody>
             </table>
@@ -502,7 +519,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
             <div className="pos-exchange-header">
               <span className="pos-exchange-label">
                 <span className="material-icons">swap_horiz</span>
-                Exchange Devices
+                Add Exchange / Buyback Device
                 {exchangeDevices.length > 0 && <em className="pos-exchange-badge">{exchangeDevices.length}</em>}
               </span>
               <button type="button" className="pos-exchange-add-btn" onClick={() => setShowExchangeForm((v) => !v)}>
@@ -529,48 +546,51 @@ const POS: React.FC<POSProps> = ({ user }) => {
             )}
 
             {showExchangeForm && (
-              <div className="pos-exchange-form">
-                <div className="pos-exchange-form-row">
-                  <input
-                    className="pos-exchange-input"
-                    placeholder="Brand *"
-                    value={newDevice.brand}
-                    onChange={(e) => setNewDevice((p) => ({ ...p, brand: e.target.value }))}
-                  />
-                  <input
-                    className="pos-exchange-input"
-                    placeholder="Model *"
-                    value={newDevice.model}
-                    onChange={(e) => setNewDevice((p) => ({ ...p, model: e.target.value }))}
-                  />
-                </div>
-                <div className="pos-exchange-form-row">
-                  <input
-                    className="pos-exchange-input"
-                    placeholder="IMEI (optional)"
-                    value={newDevice.imei || ''}
-                    onChange={(e) => setNewDevice((p) => ({ ...p, imei: e.target.value }))}
-                  />
-                  <select
-                    className="pos-exchange-input pos-exchange-select"
-                    value={newDevice.condition}
-                    onChange={(e) => setNewDevice((p) => ({ ...p, condition: e.target.value as ExchangeDeviceEntry['condition'] }))}
-                  >
-                    {EXCHANGE_CONDITIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-                  </select>
-                </div>
-                <div className="pos-exchange-form-row">
-                  <input
-                    className="pos-exchange-input"
-                    type="number"
-                    min="0"
-                    placeholder="Exchange Value (Rs) *"
-                    value={newDevice.exchangeValue || ''}
-                    onChange={(e) => setNewDevice((p) => ({ ...p, exchangeValue: Number(e.target.value || 0) }))}
-                  />
-                  <button type="button" className="pos-exchange-confirm-btn" onClick={addExchangeDevice}>
-                    <span className="material-icons">check</span> Add Device
-                  </button>
+              <div style={{ position: 'fixed', inset: 0, zIndex: 40, background: 'rgba(9, 12, 18, 0.52)', display: 'grid', placeItems: 'center', padding: 16 }}>
+                <div style={{ width: 'min(860px, 100%)', borderRadius: 20, background: 'var(--bg-primary)', border: '1px solid var(--border-color)', boxShadow: '0 30px 80px rgba(0,0,0,0.28)', overflow: 'hidden' }}>
+                  <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                    <div>
+                      <strong style={{ fontSize: 18 }}>Add Exchange / Buyback Device</strong>
+                      <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)' }}>This creates one linked buyback record and one inventory item.</p>
+                    </div>
+                    <button type="button" className="pos-exchange-add-btn" onClick={() => setShowExchangeForm(false)}>
+                      <span className="material-icons">close</span>
+                    </button>
+                  </div>
+                  <div style={{ padding: 20, display: 'grid', gap: 16 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
+                      <input className="pos-exchange-input" placeholder="Brand *" value={newDevice.brand} onChange={(e) => setNewDevice((p) => ({ ...p, brand: e.target.value }))} />
+                      <input className="pos-exchange-input" placeholder="Model *" value={newDevice.model} onChange={(e) => setNewDevice((p) => ({ ...p, model: e.target.value }))} />
+                      <input className="pos-exchange-input" placeholder="IMEI / Serial Number" value={newDevice.imei || ''} onChange={(e) => setNewDevice((p) => ({ ...p, imei: e.target.value }))} />
+                      <input className="pos-exchange-input" placeholder="Storage / Variant" value={''} onChange={() => {}} disabled />
+                      <select className="pos-exchange-input pos-exchange-select" value={newDevice.condition} onChange={(e) => setNewDevice((p) => ({ ...p, condition: e.target.value as ExchangeDeviceEntry['condition'] }))}>
+                        {EXCHANGE_CONDITIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                      </select>
+                      <input className="pos-exchange-input" type="number" min="0" placeholder="Exchange / Buyback Value" value={newDevice.exchangeValue || ''} onChange={(e) => setNewDevice((p) => ({ ...p, exchangeValue: Number(e.target.value || 0) }))} />
+                      <select className="pos-exchange-input pos-exchange-select" value={newDevice.destinationStoreId || currentStoreId} onChange={(e) => setNewDevice((p) => ({ ...p, destinationStoreId: e.target.value }))}>
+                        {stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+                      </select>
+                      <select className="pos-exchange-input pos-exchange-select" value={newDevice.inventoryStatus} onChange={(e) => setNewDevice((p) => ({ ...p, inventoryStatus: e.target.value as ExchangeDeviceEntry['inventoryStatus'] }))}>
+                        <option value="ready">Ready for Sale</option>
+                        <option value="under_repair">Under Repair</option>
+                      </select>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 12, alignItems: 'start' }}>
+                      <textarea className="pos-exchange-input" rows={4} placeholder="Notes, condition details, or remarks" style={{ resize: 'vertical' }} />
+                      <div style={{ minWidth: 280, padding: 14, borderRadius: 16, background: 'var(--color-primary-50)', color: 'var(--text-primary)' }}>
+                        <div style={{ display: 'grid', gap: 8 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span>New Product Price</span><strong>Rs {toMoney(originalSubtotal)}</strong></div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span>Exchange Device</span><strong>{newDevice.brand || 'Device'}</strong></div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span>Exchange Value / Adjustment</span><strong>−Rs {toMoney(newDevice.exchangeValue || 0)}</strong></div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, paddingTop: 8, borderTop: '1px solid rgba(0,0,0,0.08)' }}><span>Final Payable Amount</span><strong>Rs {toMoney(Math.max(0, adjustedSubtotal - discount - exchangeTotal - (newDevice.exchangeValue || 0) + exchangeTotal))}</strong></div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'grid', gap: 10, alignSelf: 'end' }}>
+                        <button type="button" className="pos-exchange-confirm-btn" onClick={addExchangeDevice}><span className="material-icons">check</span> Add Device</button>
+                        <button type="button" className="pos-exchange-confirm-btn" onClick={() => setShowExchangeForm(false)}>Cancel</button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

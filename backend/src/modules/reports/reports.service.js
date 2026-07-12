@@ -1,7 +1,7 @@
 import PDFDocument from "pdfkit";
 import {
   BulkInventory, Buyback, Customer, Employee, Expense,
-  ExchangeDevice, PaymentEntry, PriceAdjustment, Product,
+  PaymentEntry, PriceAdjustment, Product,
   Sale, SerializedInventory, StockLedger, Store,
 } from "../../db/models.js";
 import { HttpError } from "../../utils/httpError.js";
@@ -58,7 +58,7 @@ export async function getAdminReportOverview(filters) {
   const [
     stores, sales, buybacks, expenses, payments,
     customers, employees, serialized, bulk, transfers,
-    priceAdjustments, exchangeDevices,
+    priceAdjustments,
   ] = await Promise.all([
     Store.find(storeIds.length ? { _id: { $in: storeIds }, isActive: true } : { isActive: true }).lean(),
     Sale.find({ ...storeQuery, ...dateQuery }).populate("store customer employee items.product").sort({ createdAt: -1 }).limit(1000).lean(),
@@ -72,8 +72,8 @@ export async function getAdminReportOverview(filters) {
     StockLedger.find({ ...storeQuery, ...dateQuery, referenceType: "stock_transfer" })
       .populate("store product createdBy").sort({ createdAt: -1 }).limit(2000).lean(),
     PriceAdjustment.find({ ...storeQuery, ...dateQuery }).populate("product employee store sale").sort({ createdAt: -1 }).limit(2000).lean(),
-    ExchangeDevice.find({ ...storeQuery, ...dateQuery }).populate("employee store sale customer").sort({ createdAt: -1 }).limit(2000).lean(),
   ]);
+  const exchangeBuybacks = buybacks.filter((x) => x.transactionType === "exchange" || x.linkedSale);
 
   // ── KPIs ───────────────────────────────────────────────────────────────────
   const grossRevenue         = sales.reduce((sum, x) => sum + money(x.originalAmount || x.grandTotal), 0);
@@ -200,26 +200,6 @@ export async function getAdminReportOverview(filters) {
     date:             adj.createdAt,
   }));
 
-  // ── Exchange device rows ───────────────────────────────────────────────────
-  const exchangeRows = exchangeDevices.map((dev) => ({
-    id:            id(dev),
-    saleId:        dev.sale?.saleNo || id(dev.sale),
-    saleRef:       id(dev.sale),
-    customer:      dev.customer ? name(dev.customer) : "Walk-in",
-    store:         name(dev.store),
-    employee:      name(dev.employee),
-    brand:         dev.brand,
-    model:         dev.model,
-    imei:          dev.imei || "",
-    storageCapacity:dev.storageCapacity || "",
-    color:         dev.color || "",
-    condition:     dev.condition,
-    marketValue:   money(dev.marketValue),
-    exchangeValue: money(dev.exchangeValue),
-    buybackStatus: dev.buybackStatus || "received",
-    date:          dev.createdAt,
-  }));
-
   // ── Profitability rows (per product, serialized inventory sold in period) ──
   const profitabilityRows = saleRows.map((row) => {
     const product = serialized.find((s) => s.product?.jobId === row.jobNumber || s.imei === row.imei)?.product
@@ -275,7 +255,7 @@ export async function getAdminReportOverview(filters) {
       totalExpenses,
       netProfit,
       adjustmentCount:       priceAdjustments.length,
-      exchangeDeviceCount:   exchangeDevices.length,
+      exchangeDeviceCount:   exchangeBuybacks.length,
     },
     storePerformance,
     trends: groupTrend(sales, buybacks, expenses),
@@ -294,7 +274,24 @@ export async function getAdminReportOverview(filters) {
       })),
       // ── New enterprise reports ─────────────────────────────────────────
       priceAdjustments: adjustmentRows,
-      exchanges:        exchangeRows,
+      exchanges:        exchangeBuybacks.map((x) => ({
+        id: id(x),
+        saleId: x.linkedSaleNo || id(x.linkedSale) || id(x),
+        saleRef: id(x.linkedSale),
+        customer: name(x.customer, x.customerName),
+        store: name(x.destinationStore || x.store),
+        employee: name(x.createdBy),
+        brand: x.brand,
+        model: x.model,
+        imei: x.imei || x.serialNumber || "",
+        storageCapacity: x.storageVariant || "",
+        color: x.color || "",
+        condition: x.condition,
+        marketValue: money(x.marketValue),
+        exchangeValue: money(x.negotiatedPrice),
+        buybackStatus: x.inventoryStatus || x.status,
+        date: x.createdAt,
+      })),
       profitability:    profitabilityRows,
       financial: {
         grossRevenue,

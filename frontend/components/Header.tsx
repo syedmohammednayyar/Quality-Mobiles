@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Store, User } from '../types';
-import { type ApiStore } from '../services/api';
+import { updateStore, type ApiStore } from '../services/api';
 import LogoShield from './LogoShield';
 import './Header.css';
 
@@ -27,6 +27,10 @@ const Header: React.FC<HeaderProps> = ({
   const [searchParams, setSearchParams] = useSearchParams();
   const [showStoreMenu, setShowStoreMenu] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameError, setRenameError] = useState('');
+  const [isRenaming, setIsRenaming] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(document.documentElement.classList.contains('dark'));
 
   const storeMenuRef = useRef<HTMLDivElement>(null);
@@ -91,6 +95,39 @@ const Header: React.FC<HeaderProps> = ({
     setShowStoreMenu(false);
   };
 
+  const openRenameModal = () => {
+    if (!currentStore || !canSwitchStore) return;
+    setRenameValue(currentStore.name || '');
+    setRenameError('');
+    setShowRenameModal(true);
+    setShowStoreMenu(false);
+  };
+
+  const saveRename = async () => {
+    if (!currentStore || !canSwitchStore) return;
+    const nextName = renameValue.trim();
+    if (!nextName) {
+      setRenameError('Store name is required.');
+      return;
+    }
+
+    try {
+      setIsRenaming(true);
+      setRenameError('');
+      const updated = await updateStore(String(currentStore.id), { name: nextName });
+      onStoreChange?.(updated);
+      const params = new URLSearchParams(searchParams);
+      params.set('store', updated.name);
+      setSearchParams(params, { replace: true });
+      setShowRenameModal(false);
+      setShowStoreMenu(false);
+    } catch (error) {
+      setRenameError(error instanceof Error ? error.message : 'Failed to rename store.');
+    } finally {
+      setIsRenaming(false);
+    }
+  };
+
   return (
     <header className="header">
       <div className="header-container">
@@ -126,6 +163,12 @@ const Header: React.FC<HeaderProps> = ({
 
             {canSwitchStore && showStoreMenu && (
               <div className="dropdown-menu store-menu">
+                {currentStore && currentStore.name !== 'All Stores' && (
+                  <button className="dropdown-item" onClick={openRenameModal}>
+                    <span className="store-icon">R</span>
+                    <span>Rename current store</span>
+                  </button>
+                )}
                 <button
                   className={`dropdown-item ${selectedStoreName === 'All Stores' ? 'active' : ''}`}
                   onClick={() => selectStore({ id: 'all', name: 'All Stores' })}
@@ -146,6 +189,28 @@ const Header: React.FC<HeaderProps> = ({
               </div>
             )}
           </div>
+
+          {showRenameModal && currentStore && canSwitchStore && (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(9, 12, 18, 0.52)', display: 'grid', placeItems: 'center', padding: 16 }}>
+              <div style={{ width: 'min(460px, 100%)', borderRadius: 20, background: 'var(--bg-primary)', border: '1px solid var(--border-color)', boxShadow: '0 30px 80px rgba(0,0,0,0.28)', overflow: 'hidden' }}>
+                <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                  <div>
+                    <h2>Rename Store</h2>
+                    <p>Rename {currentStore.name} for all users and reports.</p>
+                  </div>
+                  <button onClick={() => setShowRenameModal(false)}>x</button>
+                </div>
+                <div style={{ padding: 20, display: 'grid', gap: 14 }}>
+                  <input className="inline-input" value={renameValue} onChange={(event) => setRenameValue(event.target.value)} placeholder="Store name" autoFocus />
+                  {renameError && <div className="pos-alert error" style={{ margin: 0 }}>{renameError}</div>}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                    <button className="btn btn-secondary" onClick={() => setShowRenameModal(false)}>Cancel</button>
+                    <button className="btn btn-primary" onClick={() => void saveRename()} disabled={isRenaming}>{isRenaming ? 'Saving...' : 'Save'}</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           <button
             className="header-icon-btn"

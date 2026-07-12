@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import {
-  BulkInventory, Buyback, Customer, Employee, ExchangeDevice,
+  BulkInventory, Buyback, Customer, Employee,
   PriceAdjustment, Product, Sale, SerializedInventory,
   StockLedger, Store, StoreInventory, User,
 } from "../../db/models.js";
@@ -269,21 +269,26 @@ export async function createSale(input) {
       });
     }
 
-    // ── ExchangeDevice records + optional Buyback ──────────────────────────
+    // ── Exchange buybacks ─────────────────────────────────────────────────
     if (input.exchangeDevices && input.exchangeDevices.length > 0) {
       for (const dev of input.exchangeDevices) {
         let buybackRef = null;
 
         if (dev.imei) {
-          // Auto-create buyback entry if IMEI is provided
           try {
             const [bb] = await Buyback.create([{
+              transactionType: "exchange",
               imei:            dev.imei,
               brand:           dev.brand,
               model:           dev.model,
               color:           dev.color || "",
               customer:        input.customerId || null,
               store:           input.storeId,
+              destinationStore: dev.destinationStoreId || input.storeId,
+              linkedSale:      sale._id,
+              linkedSaleNo:    finalSaleNo,
+              linkedProductIds: sale.items.map((item) => item.product),
+              inventoryStatus: dev.inventoryStatus || "ready",
               condition:       dev.condition || "good",
               marketValue:     dev.marketValue || dev.exchangeValue,
               negotiatedPrice: dev.exchangeValue,
@@ -293,27 +298,9 @@ export async function createSale(input) {
             }], { session });
             buybackRef = bb._id;
           } catch {
-            // Duplicate IMEI in buyback — skip auto-creation, staff will handle manually
+            // Duplicate IMEI or serial in buyback — skip auto-creation, staff will handle manually
           }
         }
-
-        await ExchangeDevice.create([{
-          sale:            sale._id,
-          customer:        input.customerId || null,
-          store:           input.storeId,
-          employee:        employee._id,
-          brand:           dev.brand,
-          model:           dev.model,
-          imei:            dev.imei  || null,
-          storageCapacity: dev.storageCapacity || null,
-          color:           dev.color || null,
-          condition:       dev.condition || "good",
-          conditionNotes:  dev.conditionNotes || null,
-          marketValue:     dev.marketValue || 0,
-          exchangeValue:   dev.exchangeValue,
-          buybackRef,
-          buybackStatus:   "received",
-        }], { session });
       }
 
       await writeAudit({
