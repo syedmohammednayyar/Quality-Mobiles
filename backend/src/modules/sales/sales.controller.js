@@ -5,6 +5,7 @@ import {
   createSale,
   deleteSale,
   getSaleById,
+  getSaleDetail,
   listSales,
   lookupSaleJob,
   updateSale,
@@ -198,6 +199,32 @@ export async function getSaleByIdHandler(req, res, next) {
     const result = await getSaleById(params.saleId);
     assertStoreAccess(req.auth, result.sale.store);
     res.status(200).json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      next(
+        new HttpError(
+          400,
+          error.issues[0]?.message || "Invalid request",
+          "VALIDATION_ERROR",
+        ),
+      );
+      return;
+    }
+    next(error);
+  }
+}
+
+export async function getSaleDetailHandler(req, res, next) {
+  try {
+    if (!req.auth) {
+      throw new HttpError(401, "Authentication required", "AUTH_REQUIRED");
+    }
+    const params = saleIdParamsSchema.parse(req.params);
+    const detail = await getSaleDetail(params.saleId);
+    if (!isAdmin(req.auth) && String(detail.store_id) !== String(req.auth.store_id)) {
+      throw new HttpError(403, "Store access denied", "STORE_ACCESS_DENIED");
+    }
+    res.status(200).json({ success: true, data: detail });
   } catch (error) {
     if (error instanceof z.ZodError) {
       next(

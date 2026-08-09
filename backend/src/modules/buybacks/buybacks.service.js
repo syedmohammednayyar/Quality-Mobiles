@@ -77,6 +77,9 @@ function mapBuyback(doc) {
     condition_assessed: !!doc.conditionAssessed,
     market_value: toMoney(doc.marketValue),
     negotiated_price: toMoney(doc.negotiatedPrice),
+    repair_cost: toMoney(doc.repairCost),
+    other_capitalized_cost: toMoney(doc.otherCapitalizedCost),
+    total_cost_basis: toMoney(Number(doc.negotiatedPrice || 0) + Number(doc.repairCost || 0) + Number(doc.otherCapitalizedCost || 0)),
     inventory_status: doc.inventoryStatus || "ready",
     linked_sale_id: doc.linkedSale ? doc.linkedSale.toString() : null,
     linked_sale_no: doc.linkedSaleNo || "",
@@ -110,6 +113,14 @@ async function processBuybackIntoInventory(buyback, userId, session) {
     );
   }
 
+  // Declared up-front: the new-product branch below references these, and
+  // reading a `const` before its declaration is a TDZ ReferenceError.
+  const storeObjectId = new mongoose.Types.ObjectId(storeId);
+  const storeDoc = await Store.findById(storeObjectId).session(session);
+  // "ready" is the only other valid Product.inventoryStatus for a device that
+  // is physically in stock; anything else is treated as sellable.
+  const nextInventoryStatus = buyback.inventoryStatus === "under_repair" ? "under_repair" : "ready";
+
   let productId = buyback.inventoryProduct;
 
   if (!productId) {
@@ -135,12 +146,12 @@ async function processBuybackIntoInventory(buyback, userId, session) {
         category: 'used_phone',
         purchasePrice: Number(toMoney(buyback.negotiatedPrice)),
         unitPrice: Number(toMoney(buyback.finalValuation || buyback.negotiatedPrice || buyback.suggestedResalePrice)),
-        inventoryStatus: buyback.inventoryStatus || "ready",
+        inventoryStatus: nextInventoryStatus,
         inventoryMode: "serialized",
         taxRate: 0,
         isActive: true,
         store: storeObjectId,
-        storeName: (await Store.findById(storeObjectId).session(session))?.name || "",
+        storeName: storeDoc?.name || "",
       }], { session });
 
       productId = newProduct._id;
@@ -150,8 +161,16 @@ async function processBuybackIntoInventory(buyback, userId, session) {
     await buyback.save({ session });
   }
 
-  const storeObjectId = new mongoose.Types.ObjectId(storeId);
   const productObjectId = new mongoose.Types.ObjectId(productId);
+
+  // Keep the linked Product in sync on every pass — this is what POS reads to
+  // decide whether the device is sellable, so a device reused from an existing
+  // product record still picks up the correct Ready/Under Repair state.
+  await Product.updateOne(
+    { _id: productObjectId },
+    { $set: { inventoryStatus: nextInventoryStatus, updatedAt: new Date() } },
+    { session },
+  );
 
   await SerializedInventory.findOneAndUpdate(
     { product: productObjectId, ...(buyback.imei ? { imei: buyback.imei } : {}) },
@@ -223,6 +242,29 @@ async function processBuybackIntoInventory(buyback, userId, session) {
       }], { session });
     }
   }
+}
+
+// Status-only sync for a buyback whose inventory record already exists.
+// Deliberately separate from processBuybackIntoInventory, which also
+// increments StoreInventory quantity — re-running that on an edit would
+// double-count the device.
+async function syncBuybackInventoryStatus(buyback, session) {
+  if (!buyback.inventoryProduct) return;
+  const nextInventoryStatus = buyback.inventoryStatus === "under_repair" ? "under_repair" : "ready";
+  const productObjectId = new mongoose.Types.ObjectId(buyback.inventoryProduct);
+
+  await Product.updateOne(
+    { _id: productObjectId },
+    { $set: { inventoryStatus: nextInventoryStatus, updatedAt: new Date() } },
+    { session },
+  );
+
+  // Never override a device that has already been sold/transferred out.
+  await SerializedInventory.updateMany(
+    { product: productObjectId, status: { $in: ["in_stock", "under_repair", "buyback_hold"] } },
+    { $set: { status: nextInventoryStatus === "under_repair" ? "under_repair" : "in_stock", updatedAt: new Date() } },
+    { session },
+  );
 }
 
 export async function listBuybacks(input = {}) {
@@ -313,6 +355,8 @@ export async function createBuyback(input, userId) {
       serviceReadyStatus: input.serviceReadyStatus || null,
       marketValue: Number(toMoney(input.marketValue)),
       negotiatedPrice: Number(toMoney(input.negotiatedPrice)),
+      repairCost: Number(toMoney(input.repairCost || input.repair_cost || 0)),
+      otherCapitalizedCost: Number(toMoney(input.otherCapitalizedCost || input.other_capitalized_cost || 0)),
       status: toDbStatus(input.status || "Pending"),
       inventoryStatus: input.inventoryStatus || "ready",
       linkedSale: input.linkedSale ? new mongoose.Types.ObjectId(input.linkedSale) : null,
@@ -411,6 +455,11 @@ export async function updateBuyback(buybackId, input, userId) {
     buyback.condition = input.condition !== undefined ? toDbCondition(input.condition) : buyback.condition;
     buyback.marketValue = input.marketValue !== undefined ? Number(toMoney(input.marketValue)) : buyback.marketValue;
     buyback.negotiatedPrice = input.negotiatedPrice !== undefined ? Number(toMoney(input.negotiatedPrice)) : buyback.negotiatedPrice;
+    const repairCostInput = input.repairCost !== undefined ? input.repairCost : input.repair_cost;
+    const otherCostInput = input.otherCapitalizedCost !== undefined ? input.otherCapitalizedCost : input.other_capitalized_cost;
+    const costBasisChanged = repairCostInput !== undefined || otherCostInput !== undefined || input.negotiatedPrice !== undefined;
+    if (repairCostInput !== undefined) buyback.repairCost = Number(toMoney(repairCostInput));
+    if (otherCostInput !== undefined) buyback.otherCapitalizedCost = Number(toMoney(otherCostInput));
     buyback.inventoryStatus = input.inventoryStatus !== undefined ? input.inventoryStatus : buyback.inventoryStatus;
     buyback.transactionType = input.transactionType !== undefined ? input.transactionType : buyback.transactionType;
     buyback.linkedSale = input.linkedSale !== undefined ? (input.linkedSale ? new mongoose.Types.ObjectId(input.linkedSale) : null) : buyback.linkedSale;
@@ -420,7 +469,27 @@ export async function updateBuyback(buybackId, input, userId) {
 
     await buyback.save({ session });
 
-    if (!buyback.inventoryProduct) await processBuybackIntoInventory(buyback, userId, session);
+    if (!buyback.inventoryProduct) {
+      await processBuybackIntoInventory(buyback, userId, session);
+    } else if (input.inventoryStatus !== undefined) {
+      // Ready for Sale <-> Under Repair transition on an existing device:
+      // push it through to the Product/SerializedInventory records that POS
+      // reads, without touching stock quantities.
+      await syncBuybackInventoryStatus(buyback, session);
+    }
+
+    // Loss Management: keep the linked Product's cost basis in sync with the buyback's
+    // total cost (negotiatedPrice + repair + other capitalized cost) so *future* sales
+    // snapshot the correct cost basis. Historical sales already snapshotted their own
+    // costBasis at sale time and are never touched by this.
+    if (costBasisChanged && buyback.inventoryProduct) {
+      const totalCostBasis = Number(buyback.negotiatedPrice || 0) + Number(buyback.repairCost || 0) + Number(buyback.otherCapitalizedCost || 0);
+      await Product.updateOne(
+        { _id: buyback.inventoryProduct },
+        { $set: { purchasePrice: Number(totalCostBasis.toFixed(2)), updatedAt: new Date() } },
+        { session },
+      );
+    }
 
     return mapBuyback(buyback);
   });

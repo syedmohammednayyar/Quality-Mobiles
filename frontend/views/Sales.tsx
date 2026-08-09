@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { User } from '../types';
-import { listSales, listStores, type ApiSale, type ApiStore } from '../services/api';
+import { getSaleDetail, listSales, listStores, type ApiSale, type ApiSaleDetail, type ApiStore } from '../services/api';
 import './Sales.css';
+
+const money = (value: number | string) => `Rs ${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 
 type SaleRow = {
   key: string;
@@ -22,6 +24,10 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [viewSaleId, setViewSaleId] = useState<string | null>(null);
+  const [viewDetail, setViewDetail] = useState<ApiSaleDetail | null>(null);
+  const [viewLoading, setViewLoading] = useState(false);
+  const [viewError, setViewError] = useState('');
 
   useEffect(() => {
     const refresh = () => setRefreshKey((value) => value + 1);
@@ -81,10 +87,28 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
     });
   }, [rows, search, storeFilter, employeeFilter, paymentFilter, statusFilter, fromDate, toDate]);
 
+  useEffect(() => {
+    if (!viewSaleId) { setViewDetail(null); return; }
+    let cancelled = false;
+    void (async () => {
+      try {
+        setViewLoading(true);
+        setViewError('');
+        const detail = await getSaleDetail(viewSaleId);
+        if (!cancelled) setViewDetail(detail);
+      } catch (err) {
+        if (!cancelled) setViewError(err instanceof Error ? err.message : 'Failed to load sale details');
+      } finally {
+        if (!cancelled) setViewLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [viewSaleId]);
+
   return (
     <div className="sales-page">
-      <header className="sales-header">
-        <div><h1>Sales History</h1><p>{filteredRows.length} sold products | exchange and adjustments shown separately</p></div>
+      <header className="module-header sales-header">
+        <div><h1>Sales History</h1><p>{filteredRows.length} sold products &middot; exchange and adjustments shown separately</p></div>
         <strong>Rs {filteredRows.reduce((sum, row) => sum + Number(row.sale.total_amount || row.item.line_total || row.item.unit_price || 0), 0).toLocaleString()}</strong>
       </header>
 
@@ -102,7 +126,7 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
 
       <section className="sales-table-wrap">
         <table className="sales-table-modern">
-          <thead><tr><th>Sale ID</th><th>Job Number</th><th>Product</th><th>IMEI</th><th>Customer</th><th>Store</th><th>Employee</th><th>Price Breakdown</th><th>Payment</th><th>Sale Date</th><th>Status</th></tr></thead>
+          <thead><tr><th>Sale ID</th><th>Job Number</th><th>Product</th><th>IMEI</th><th>Customer</th><th>Store</th><th>Employee</th><th>Price Breakdown</th><th>Payment</th><th>Sale Date</th><th>Status</th><th></th></tr></thead>
           <tbody>
             {filteredRows.map(({ key, sale, item }) => (
               <tr key={key}>
@@ -122,13 +146,97 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                 <td>{sale.payment_method || '-'}</td>
                 <td>{new Date(sale.sold_at).toLocaleString()}</td>
                 <td><span className={`sales-status ${sale.payment_status || 'pending'}`}>{sale.payment_status || sale.sale_status || 'completed'}</span></td>
+                <td><button type="button" className="sales-view-btn" onClick={() => setViewSaleId(sale.id)}>View</button></td>
               </tr>
             ))}
-            {!loading && filteredRows.length === 0 && <tr><td colSpan={11} className="sales-empty">No completed sales found.</td></tr>}
-            {loading && <tr><td colSpan={11} className="sales-empty">Loading sales...</td></tr>}
+            {!loading && filteredRows.length === 0 && <tr><td colSpan={12} className="sales-empty">
+              <strong>No sales found</strong>
+              <span>No completed sales match the selected filters. Try changing the date range, store or search.</span>
+            </td></tr>}
+            {loading && <tr><td colSpan={12} className="sales-empty">Loading sales...</td></tr>}
           </tbody>
         </table>
       </section>
+
+      {viewSaleId && (
+        <div className="sales-drawer-overlay" onClick={() => setViewSaleId(null)}>
+          <div className="sales-drawer" onClick={(event) => event.stopPropagation()}>
+            <div className="sales-drawer-head">
+              <h2>Sale Details</h2>
+              <button type="button" onClick={() => setViewSaleId(null)} aria-label="Close">×</button>
+            </div>
+
+            {viewLoading && <p className="sales-state">Loading sale details...</p>}
+            {viewError && <p className="sales-state sales-state-error">{viewError}</p>}
+
+            {viewDetail && !viewLoading && (
+              <div className="sales-drawer-body">
+                <p className="sales-drawer-id">{viewDetail.sale_no} &middot; {new Date(viewDetail.created_at).toLocaleString()}</p>
+
+                <dl>
+                  <dt>Store</dt><dd>{viewDetail.store_name}</dd>
+                  <dt>Employee</dt><dd>{viewDetail.employee_name}</dd>
+                  <dt>Customer</dt><dd>{viewDetail.customer_name}{viewDetail.customer_phone ? ` (${viewDetail.customer_phone})` : ''}</dd>
+                  <dt>Status</dt><dd><span className={`sales-status ${viewDetail.payment_status}`}>{viewDetail.payment_status}</span></dd>
+                  {viewDetail.attended_by_name && <><dt>Attended By</dt><dd>{viewDetail.attended_by_name}</dd></>}
+                  {viewDetail.referred_by_name && <><dt>Referred By</dt><dd>{viewDetail.referred_by_name}</dd></>}
+                  {viewDetail.job_number && <><dt>Job Number</dt><dd>{viewDetail.job_number}</dd></>}
+                  {viewDetail.ic_number && <><dt>IC Number</dt><dd>{viewDetail.ic_number}</dd></>}
+                  {viewDetail.gift && <><dt>Gift</dt><dd>{viewDetail.gift}</dd></>}
+                </dl>
+
+                <h3>Items</h3>
+                <div className="sales-drawer-items">
+                  {viewDetail.items.map((item) => (
+                    <div key={item.id} className={`sales-drawer-item${item.is_loss ? ' loss' : ''}`}>
+                      <div className="sales-drawer-item-head">
+                        <strong>{item.product_name}</strong>
+                        <span>{item.brand} {item.model}</span>
+                        <span>{item.imei || item.job_id || item.sku || '-'}</span>
+                      </div>
+                      <div className="sales-drawer-item-grid">
+                        <div><span>Qty</span><strong>{item.quantity}</strong></div>
+                        <div><span>Original Price</span><strong>{money(item.original_unit_price)}</strong></div>
+                        <div><span>Sold Price</span><strong>{money(item.adjusted_unit_price)}</strong></div>
+                        <div><span>Line Total</span><strong>{money(item.line_total)}</strong></div>
+                        <div><span>Cost Basis</span><strong>{money(item.cost_basis)}</strong></div>
+                        <div><span>Result</span><strong className={item.is_loss ? 'loss' : 'profit'}>{item.is_loss ? `− ${money(Math.abs(Number(item.gross_result)))} Loss` : `+ ${money(Math.abs(Number(item.gross_result)))} Profit`}</strong></div>
+                      </div>
+                      {item.price_was_adjusted && <p className="sales-drawer-item-note">Price adjusted{item.adjustment_category ? ` (${item.adjustment_category})` : ''}{item.adjustment_reason ? `: ${item.adjustment_reason}` : ''}</p>}
+                    </div>
+                  ))}
+                </div>
+
+                <h3>Payments</h3>
+                <div className="sales-drawer-payments">
+                  {viewDetail.payments.length === 0 && <p className="sales-drawer-item-note">No payment records.</p>}
+                  {viewDetail.payments.map((payment) => (
+                    <div key={payment.id} className="sales-drawer-payment-row">
+                      <span>{payment.method}</span>
+                      <span>{money(payment.amount)}</span>
+                      <span className={`sales-status ${payment.status}`}>{payment.status}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <h3>Totals</h3>
+                <div className="sales-drawer-financials">
+                  <div><span>Original Amount</span><strong>{money(viewDetail.original_amount)}</strong></div>
+                  <div><span>Price Adjustment</span><strong>{money(viewDetail.price_adjustment_total)}</strong></div>
+                  <div><span>Discount</span><strong>{money(viewDetail.discount_total)}</strong></div>
+                  <div><span>Exchange</span><strong>{money(viewDetail.exchange_total)}</strong></div>
+                  <div><span>Tax</span><strong>{money(viewDetail.tax_total)}</strong></div>
+                  <div className="highlight"><span>Grand Total</span><strong>{money(viewDetail.grand_total)}</strong></div>
+                  <div><span>Amount Paid</span><strong>{money(viewDetail.amount_paid)}</strong></div>
+                </div>
+
+                {viewDetail.note && <p className="sales-drawer-item-note">Note: {viewDetail.note}</p>}
+                {viewDetail.referral_notes && <p className="sales-drawer-item-note">Referral: {viewDetail.referral_notes}</p>}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -17,6 +17,8 @@ export async function getAdminOverviewHandler(req, res, next) {
       quickRange: req.query.quickRange || "this_month",
       fromDate: req.query.fromDate,
       toDate: req.query.toDate,
+      month: req.query.month,
+      year: req.query.year,
       storeIds: scopedStoreIds(req),
     });
     res.json({ success: true, data: payload });

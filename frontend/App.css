@@ -1,0 +1,64 @@
+/* ── App shell: three independent layout regions ─────────────────────────
+   .app-shell   → grid: [sidebar column] [app-area column]
+   .app-area    → grid: [header row] [main-content row]
+   Only .sidebar-content (Sidebar.css) and .main-content scroll internally.
+   Neither the document nor .app-shell/.app-area themselves ever scroll. */
+
+.app-shell {
+  height: 100dvh;
+  width: 100%;
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.app-area {
+  min-width: 0;
+  min-height: 0;
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: var(--header-height) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.main-content {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(139, 192, 224, 0.32), transparent 34%),
+    radial-gradient(circle at 100% 0%, rgba(94, 231, 223, 0.26), transparent 30%),
+    var(--bg-secondary);
+}
+
+.main-content-inner {
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+/* Desktop sidebar collapse: the toggle button shrinks the sidebar's own grid
+   column to 0 instead of using position:fixed/transform, so main-content
+   reflows to fill the freed space through normal grid sizing — there is no
+   way for the two to overlap, because they're still both real grid tracks. */
+@media (min-width: 1025px) {
+  .app-shell {
+    transition: grid-template-columns 0.28s ease;
+  }
+
+  .app-shell.sidebar-collapsed {
+    grid-template-columns: 0px minmax(0, 1fr);
+  }
+}
+
+/* Tablet/mobile: sidebar leaves the grid flow entirely and becomes an
+   off-canvas drawer (see Sidebar.css) — .app-area takes the full shell
+   width regardless of the collapsed class, which only means something on
+   desktop. */
+@media (max-width: 1024px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

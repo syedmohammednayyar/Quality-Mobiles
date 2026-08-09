@@ -7,6 +7,9 @@ import {
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
 import { writeAudit } from "../../utils/audit.js";
+import { nextSequence } from "../../utils/sequence.js";
+import { allocateEffectiveSellingAmounts, classifyLossType, computeCostBasis, evaluateLoss } from "../losses/lossCalculation.service.js";
+import { createLossRecordsForSale, reverseLossesForSale } from "../losses/losses.service.js";
 
 // ─── Money helpers ────────────────────────────────────────────────────────────
 
@@ -18,11 +21,6 @@ function toCents(value) {
 
 function fromCents(cents) {
   return Number((cents / 100).toFixed(2));
-}
-
-function todayStamp() {
-  const now = new Date();
-  return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
 }
 
 // ─── Require helpers ──────────────────────────────────────────────────────────
@@ -93,6 +91,13 @@ export async function createSale(input) {
       throw new HttpError(400, "One or more products are invalid or inactive", "SALE_INVALID_PRODUCT");
     }
     const productMap = new Map(products.map((p) => [p._id.toString(), p]));
+
+    // ── Load buyback cost basis for used-phone items (Loss Management) ─────
+    const usedPhoneProductIds = products.filter((p) => p.category === "used_phone").map((p) => p._id);
+    const buybacksForCostBasis = usedPhoneProductIds.length
+      ? await Buyback.find({ inventoryProduct: { $in: usedPhoneProductIds } }).session(session)
+      : [];
+    const buybackByProductId = new Map(buybacksForCostBasis.map((b) => [String(b.inventoryProduct), b]));
 
     // ── Load inventory ─────────────────────────────────────────────────────
     const inventoryByProductId = new Map();
@@ -181,6 +186,49 @@ export async function createSale(input) {
       };
     });
 
+    // ── Loss Management: cost basis + effective selling amount per item ────
+    // Bill-level discountCents is allocated proportionally across items by
+    // their share of lineAdjustedTotal; exchangeCents is never subtracted
+    // here (exchange economics live on the traded-in device's own Buyback).
+    const lossAllocations = allocateEffectiveSellingAmounts(
+      computedItems.map((item) => ({ lineAdjustedTotalCents: toCents(item.lineAdjustedTotal) })),
+      discountCents,
+    );
+    const computedItemsForLoss = computedItems.map((item, index) => {
+      const product = productMap.get(String(item.product));
+      const buyback = product?.category === "used_phone" ? buybackByProductId.get(String(product._id)) : null;
+      const { costBasisCents, costBasisSource, buybackId } = computeCostBasis({
+        productCategory: product?.category,
+        purchasePrice: product?.purchasePrice,
+        quantity: item.quantity,
+        buyback,
+      });
+      const { effectiveSellingAmountCents, discountAllocatedCents } = lossAllocations[index];
+      const { grossResultCents, isLoss, lossAmountCents, lossPercentage } = evaluateLoss({ costBasisCents, effectiveSellingAmountCents });
+      const { lossType, lossReason } = isLoss
+        ? classifyLossType({ hasBuyback: Boolean(buyback), priceWasAdjusted: item.priceWasAdjusted, adjustmentCategory: item.adjustmentCategory })
+        : { lossType: null, lossReason: null };
+
+      // Persisted directly on the Sale.items subdocument (immutable snapshot)
+      item.costBasis = fromCents(costBasisCents);
+      item.costBasisSource = costBasisSource;
+      item.effectiveSellingAmount = fromCents(effectiveSellingAmountCents);
+      item.grossResult = fromCents(grossResultCents);
+      item.isLoss = isLoss;
+
+      return {
+        isLoss,
+        costBasis: item.costBasis,
+        effectiveSellingAmount: item.effectiveSellingAmount,
+        discountAllocated: fromCents(discountAllocatedCents),
+        lossAmount: fromCents(lossAmountCents),
+        lossPercentage,
+        lossType,
+        lossReason,
+        buybackId,
+      };
+    });
+
     const priceAdjustmentTotalCents = originalAmountCents - adjustedAmountCents;
     const grandTotalCents = adjustedAmountCents + taxTotalCents - discountCents - exchangeCents;
     if (grandTotalCents < 0) throw new HttpError(400, "Grand total cannot be negative. Exchange/discount exceeds sale value.", "SALE_NEGATIVE_TOTAL");
@@ -234,11 +282,26 @@ export async function createSale(input) {
       })),
     }], { session });
 
-    const finalSaleNo = `SAL-${todayStamp()}-${sale._id.toString().slice(-6).toUpperCase()}`;
+    // Short, sequential, human-readable — e.g. SAL-000123 — instead of a
+    // date+hash string. Only affects sales created from now on; existing
+    // saleNo values are never regenerated.
+    const finalSaleNo = await nextSequence("sale_no", "SAL-", 6);
     sale.saleNo = finalSaleNo;
     await sale.save({ session });
 
     const ctx = { userId: input.userId, employeeId: employee._id, storeId: input.storeId };
+
+    // ── Loss Management: create LossRecord docs for below-cost items only ──
+    await createLossRecordsForSale({
+      sale,
+      computedItems: computedItemsForLoss,
+      productMap,
+      employeeId: employee._id,
+      customerId: input.customerId || null,
+      storeId: input.storeId,
+      userId: input.userId,
+      session,
+    });
 
     // ── PriceAdjustment records ────────────────────────────────────────────
     const adjustedItems = computedItems.filter((item) => item.priceWasAdjusted);
@@ -370,6 +433,92 @@ export async function getSaleById(saleId) {
   return { sale: sale.toObject(), items: sale.items, payments: sale.payments };
 }
 
+// ─── getSaleDetail ──────────────────────────────────────────────────────────
+// Fully populated, human-readable sale detail for the "View" feature in Sales
+// history — distinct from getSaleById (kept raw/unpopulated since callers like
+// updateSale/deleteSale rely on sale.store being a plain ObjectId for access checks).
+
+function mapSaleDetail(sale) {
+  return {
+    id:                    String(sale._id),
+    sale_no:               sale.saleNo,
+    status:                sale.status,
+    store_id:              sale.store?._id ? String(sale.store._id) : String(sale.store),
+    store_name:            sale.store?.name || "",
+    customer_id:           sale.customer?._id ? String(sale.customer._id) : (sale.customer ? String(sale.customer) : null),
+    customer_name:         sale.customer?.fullName || "Walk-in",
+    customer_phone:        sale.customer?.phone || "",
+    employee_id:           sale.employee?._id ? String(sale.employee._id) : String(sale.employee),
+    employee_name:         sale.employee?.fullName || sale.salespersonName || "",
+    attended_by_name:      sale.attendedBy?.fullName || "",
+    referred_by_name:      sale.referredByEmployee?.fullName || "",
+    referral_notes:        sale.referralNotes || "",
+    original_amount:       Number(sale.originalAmount || 0).toFixed(2),
+    adjusted_amount:       Number(sale.adjustedAmount || 0).toFixed(2),
+    price_adjustment_total:Number(sale.priceAdjustmentTotal || 0).toFixed(2),
+    subtotal:               Number(sale.subtotal || 0).toFixed(2),
+    tax_total:               Number(sale.taxTotal || 0).toFixed(2),
+    discount_total:          Number(sale.discountTotal || 0).toFixed(2),
+    exchange_total:          Number(sale.exchangeTotal || 0).toFixed(2),
+    grand_total:             Number(sale.grandTotal || 0).toFixed(2),
+    amount_paid:             Number(sale.amountPaid || 0).toFixed(2),
+    payment_status:          sale.paymentStatus,
+    job_number:              sale.jobNumber || "",
+    ic_number:               sale.icNumber || "",
+    gift:                    sale.gift || "",
+    note:                    sale.note || "",
+    created_at:              sale.createdAt,
+    items: sale.items.map((item) => ({
+      id:                      String(item._id),
+      product_id:              item.product?._id ? String(item.product._id) : String(item.product),
+      product_name:            item.product?.name || "",
+      brand:                   item.product?.brand || "",
+      model:                   item.product?.model || "",
+      imei:                    item.product?.imei || "",
+      job_id:                  item.product?.jobId || "",
+      sku:                     item.product?.sku || "",
+      category:                item.product?.category || item.category || "",
+      quantity:                item.quantity,
+      original_unit_price:     Number(item.originalUnitPrice || 0).toFixed(2),
+      adjusted_unit_price:     Number(item.adjustedUnitPrice || 0).toFixed(2),
+      price_was_adjusted:      Boolean(item.priceWasAdjusted),
+      adjustment_reason:       item.adjustmentReason || "",
+      adjustment_category:     item.adjustmentCategory || "",
+      line_original_total:     Number(item.lineOriginalTotal || 0).toFixed(2),
+      line_adjusted_total:     Number(item.lineAdjustedTotal || 0).toFixed(2),
+      tax_amount:              Number(item.taxAmount || 0).toFixed(2),
+      line_total:              Number(item.lineTotal || 0).toFixed(2),
+      // Loss Management: immutable per-item snapshot (spec §36)
+      cost_basis:              Number(item.costBasis || 0).toFixed(2),
+      cost_basis_source:       item.costBasisSource || null,
+      effective_selling_amount:Number(item.effectiveSellingAmount || 0).toFixed(2),
+      gross_result:            Number(item.grossResult || 0).toFixed(2),
+      is_loss:                 Boolean(item.isLoss),
+    })),
+    payments: sale.payments.map((p) => ({
+      id:           String(p._id),
+      method:       p.paymentMethod,
+      status:       p.status,
+      amount:       Number(p.amount || 0).toFixed(2),
+      reference_no: p.referenceNo || "",
+      notes:        p.notes || "",
+      paid_at:      p.paidAt,
+    })),
+  };
+}
+
+export async function getSaleDetail(saleId) {
+  const sale = await Sale.findById(saleId)
+    .populate("customer", "fullName phone")
+    .populate("store", "name")
+    .populate("employee", "fullName")
+    .populate("attendedBy", "fullName")
+    .populate("referredByEmployee", "fullName")
+    .populate("items.product", "name brand model imei jobId sku category");
+  if (!sale) throw new HttpError(404, "Sale not found", "SALE_NOT_FOUND");
+  return mapSaleDetail(sale);
+}
+
 // ─── listSales ────────────────────────────────────────────────────────────────
 
 export async function listSales(input) {
@@ -495,6 +644,9 @@ export async function deleteSale(saleId, userId) {
         },
       }, { session });
     }
+
+    // Loss Management: reverse (never delete) any active loss records tied to this sale
+    await reverseLossesForSale({ saleId, userId, reason: "Sale cancelled", session });
 
     await Sale.deleteOne({ _id: saleId }).session(session);
     await writeAudit({ action: "sale_cancelled", entityType: "sale", entityId: saleId, ctx: { userId }, metadata: { saleNo: sale.saleNo } });

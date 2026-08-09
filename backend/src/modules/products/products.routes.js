@@ -5,6 +5,7 @@ import { applyStoreFilter, resolveStoreContext } from "../../middleware/storeSco
 import {
   createProductHandler,
   deleteProductHandler,
+  getProductHistoryHandler,
   listProductsHandler,
   updateProductHandler,
 } from "./products.controller.js";
@@ -27,7 +28,12 @@ productsRouter.post(
 );
 productsRouter.patch(
   "/:productId",
-  authorize("admin"),
+  authorize("admin", { message: "You do not have permission to edit product details. Only an administrator can change product master data." }),
   updateProductHandler,
+);
+productsRouter.get(
+  "/:productId/history",
+  authorize("admin", "manager"),
+  getProductHistoryHandler,
 );
 productsRouter.delete("/:productId", authorize("admin"), deleteProductHandler);

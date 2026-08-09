@@ -17,6 +17,7 @@ import workflowsRouter from "./modules/workflows/workflows.routes.js";
 import changeRequestsRouter from "./modules/changeRequests/changeRequests.routes.js";
 import { reportsRouter } from "./modules/reports/reports.routes.js";
 import { employeeAccessRouter } from "./modules/employeeAccess/employeeAccess.routes.js";
+import { lossesRouter } from "./modules/losses/losses.routes.js";
 
 export const app = express();
 
@@ -43,5 +44,6 @@ app.use("/api/v1/workflows", workflowsRouter);
 app.use("/api/v1/change-requests", changeRequestsRouter);
 app.use("/api/v1/reports", reportsRouter);
 app.use("/api/v1/employee-access", employeeAccessRouter);
+app.use("/api/v1/losses", lossesRouter);
 
 app.use(errorHandler);

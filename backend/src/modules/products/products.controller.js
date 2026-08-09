@@ -4,6 +4,7 @@ import { assertStoreAccess, isAdmin } from "../../utils/storeAccess.js";
 import {
   createProduct,
   deleteProduct,
+  getProductHistory,
   listProducts,
   updateProduct,
 } from "./products.service.js";
@@ -36,7 +37,7 @@ const productPayloadSchema = z.object({
   selling_price: z.coerce.number().min(0).optional(),
   discount: z.coerce.number().min(0).optional(),
   tax: z.coerce.number().min(0).max(100).optional(),
-  inventory_status: z.enum(["ready", "sold"]).optional(),
+  inventory_status: z.enum(["ready", "under_repair", "sold"]).optional(),
   inventory_mode: z.enum(["serialized", "bulk"]).optional(),
   stock_quantity: z.coerce.number().int().min(0).default(0),
   min_stock_level: z.coerce.number().int().min(0).default(0),
@@ -53,6 +54,13 @@ const productPayloadSchema = z.object({
   remarks: z.string().max(1000).optional(),
   device_notes: z.string().max(1000).optional(),
   active: z.boolean().optional(),
+  // Required (enforced service-side) only when a price/status/identity field
+  // actually changes — this is the reason for that change, not product notes.
+  remark: z.string().max(500).optional(),
+  // Stock-entry metadata — recorded on the StockLedger row, not the product.
+  entry_type: z.enum(["new_stock", "return", "correction", "adjustment", "damage", "lost"]).optional(),
+  reference: z.string().max(120).optional(),
+  entry_remark: z.string().max(500).optional(),
 });
 
 const createProductSchema = productPayloadSchema;
@@ -111,6 +119,10 @@ function toServicePayload(payload, userId) {
     remarks: payload.remarks,
     deviceNotes: payload.device_notes,
     active: payload.active,
+    remark: payload.remark,
+    entryType: payload.entry_type,
+    reference: payload.reference,
+    entryRemark: payload.entry_remark,
   };
 }
 
@@ -151,6 +163,18 @@ export async function updateProductHandler(req, res, next) {
 
     const row = await updateProduct(params.productId, toServicePayload(payload, req.auth.userId));
     res.status(200).json(row);
+  } catch (error) {
+    if (handleZod(error, next)) return;
+    next(error);
+  }
+}
+
+export async function getProductHistoryHandler(req, res, next) {
+  try {
+    if (!req.auth) throw new HttpError(401, "Authentication required", "AUTH_REQUIRED");
+    const params = productIdParamsSchema.parse(req.params);
+    const rows = await getProductHistory(params.productId);
+    res.status(200).json({ rows });
   } catch (error) {
     if (handleZod(error, next)) return;
     next(error);

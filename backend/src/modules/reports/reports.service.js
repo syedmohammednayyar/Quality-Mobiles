@@ -1,7 +1,7 @@
 import PDFDocument from "pdfkit";
 import {
   BulkInventory, Buyback, Customer, Employee, Expense,
-  PaymentEntry, PriceAdjustment, Product,
+  LossRecord, PaymentEntry, PriceAdjustment, Product,
   Sale, SerializedInventory, StockLedger, Store,
 } from "../../db/models.js";
 import { HttpError } from "../../utils/httpError.js";
@@ -10,7 +10,11 @@ const money = (value) => Number(value || 0);
 const id    = (value) => String(value?._id || value || "");
 const name  = (value, fallback = "") => value?.name || value?.fullName || value?.username || fallback;
 
-function buildDateRange(rangeKey, from, to) {
+// Resolves the requested reporting window to a concrete [start, end] pair.
+// Every branch returns real Date objects so the caller can build an indexed
+// createdAt range query — the filtering always happens in the database, never
+// by loading everything and filtering in JS.
+export function buildDateRange(rangeKey, from, to, month, year) {
   const now   = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const day   = 86400000;
@@ -21,19 +25,49 @@ function buildDateRange(rangeKey, from, to) {
     this_month: [new Date(today.getFullYear(), today.getMonth(), 1), today],
     last_month: [new Date(today.getFullYear(), today.getMonth() - 1, 1), new Date(today.getFullYear(), today.getMonth(), 0)],
     this_year:  [new Date(today.getFullYear(), 0, 1), today],
+    last_year:  [new Date(today.getFullYear() - 1, 0, 1), new Date(today.getFullYear() - 1, 11, 31)],
+    // Deliberately wide window rather than "no filter" so every downstream
+    // query keeps the same indexed createdAt shape.
+    all:        [new Date(2000, 0, 1), today],
   };
-  if (rangeKey === "custom") {
-    if (!from || !to) throw new HttpError(400, "Custom date range requires from/to", "REPORT_RANGE_REQUIRED");
-    return [new Date(from), new Date(to)];
+
+  // Month/Year picker: year alone → whole year; year + month → that month.
+  if (rangeKey === "month_year") {
+    const y = Number(year);
+    if (!Number.isInteger(y) || y < 2000 || y > 2999) {
+      throw new HttpError(400, "A valid year is required for month/year reporting", "REPORT_YEAR_REQUIRED");
+    }
+    if (month === undefined || month === null || month === "" || month === "all") {
+      return [new Date(y, 0, 1), new Date(y, 11, 31)];
+    }
+    const m = Number(month);
+    if (!Number.isInteger(m) || m < 1 || m > 12) {
+      throw new HttpError(400, "Month must be between 1 and 12", "REPORT_MONTH_INVALID");
+    }
+    return [new Date(y, m - 1, 1), new Date(y, m, 0)];
   }
+
+  if (rangeKey === "custom") {
+    if (!from || !to) throw new HttpError(400, "Custom date range requires both a From and To date", "REPORT_RANGE_REQUIRED");
+    const start = new Date(from);
+    const end   = new Date(to);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      throw new HttpError(400, "Custom date range contains an invalid date", "REPORT_RANGE_INVALID");
+    }
+    if (start > end) {
+      throw new HttpError(400, "From date cannot be after To date", "REPORT_RANGE_ORDER");
+    }
+    return [start, end];
+  }
+
   return map[rangeKey] || map.this_month;
 }
 
-function groupTrend(sales, buybacks, expenses) {
+function groupTrend(sales, buybacks, expenses, losses) {
   const rows = new Map();
   const row = (date) => {
     const key = new Date(date).toISOString().slice(0, 10);
-    if (!rows.has(key)) rows.set(key, { date: key, grossSales: 0, netSales: 0, adjustments: 0, exchanges: 0, buybacks: 0, expenses: 0 });
+    if (!rows.has(key)) rows.set(key, { date: key, grossSales: 0, netSales: 0, adjustments: 0, exchanges: 0, buybacks: 0, expenses: 0, loss: 0 });
     return rows.get(key);
   };
   sales.forEach((x) => {
@@ -45,11 +79,12 @@ function groupTrend(sales, buybacks, expenses) {
   });
   buybacks.forEach((x)  => { row(x.createdAt).buybacks  += money(x.negotiatedPrice); });
   expenses.forEach((x)  => { row(x.expenseDate || x.createdAt).expenses += money(x.outCash) + money(x.outOnline); });
+  (losses || []).forEach((x) => { row(x.createdAt).loss += money(x.lossAmount); });
   return [...rows.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
 export async function getAdminReportOverview(filters) {
-  const [start, endRaw] = buildDateRange(filters.quickRange, filters.fromDate, filters.toDate);
+  const [start, endRaw] = buildDateRange(filters.quickRange, filters.fromDate, filters.toDate, filters.month, filters.year);
   const end = new Date(endRaw); end.setHours(23, 59, 59, 999);
   const storeIds  = filters.storeIds || [];
   const storeQuery = storeIds.length ? { store: { $in: storeIds } } : {};
@@ -58,7 +93,7 @@ export async function getAdminReportOverview(filters) {
   const [
     stores, sales, buybacks, expenses, payments,
     customers, employees, serialized, bulk, transfers,
-    priceAdjustments,
+    priceAdjustments, losses,
   ] = await Promise.all([
     Store.find(storeIds.length ? { _id: { $in: storeIds }, isActive: true } : { isActive: true }).lean(),
     Sale.find({ ...storeQuery, ...dateQuery }).populate("store customer employee items.product").sort({ createdAt: -1 }).limit(1000).lean(),
@@ -72,6 +107,8 @@ export async function getAdminReportOverview(filters) {
     StockLedger.find({ ...storeQuery, ...dateQuery, referenceType: "stock_transfer" })
       .populate("store product createdBy").sort({ createdAt: -1 }).limit(2000).lean(),
     PriceAdjustment.find({ ...storeQuery, ...dateQuery }).populate("product employee store sale").sort({ createdAt: -1 }).limit(2000).lean(),
+    LossRecord.find({ ...storeQuery, ...dateQuery, lossStatus: "active" })
+      .populate("store employee customer product").sort({ createdAt: -1 }).limit(2000).lean(),
   ]);
   const exchangeBuybacks = buybacks.filter((x) => x.transactionType === "exchange" || x.linkedSale);
 
@@ -88,6 +125,14 @@ export async function getAdminReportOverview(filters) {
   const productsSold         = sales.reduce((sum, x) => sum + x.items.reduce((n, item) => n + money(item.quantity), 0), 0);
   const netProfit            = netRevenue - buybackCost - totalExpenses;
 
+  // ── Loss Management KPIs ────────────────────────────────────────────────────
+  const totalLoss            = losses.reduce((sum, x) => sum + money(x.lossAmount), 0);
+  const lossItemCount        = losses.length;
+  const lossTransactionCount = new Set(losses.map((x) => id(x.sale))).size;
+  const averageLoss          = lossItemCount > 0 ? Number((totalLoss / lossItemCount).toFixed(2)) : 0;
+  const totalProfit          = sales.reduce((sum, sale) => sum + (sale.items || []).reduce((s, item) => s + (money(item.grossResult) > 0 ? money(item.grossResult) : 0), 0), 0);
+  const netGrossResult       = totalProfit - totalLoss;
+
   // ── Store performance ──────────────────────────────────────────────────────
   const storePerformance = stores.map((store) => {
     const sId          = id(store);
@@ -95,7 +140,7 @@ export async function getAdminReportOverview(filters) {
     const storeSerialized = serialized.filter((x) => id(x.store) === sId && x.status === "in_stock");
     const storeBulk    = bulk.filter((x) => id(x.store) === sId);
     return {
-      storeId:          sId,
+      storeCode:        store.code,
       storeName:        store.name,
       grossRevenue:     storeSales.reduce((sum, x) => sum + money(x.originalAmount || x.grandTotal), 0),
       revenue:          storeSales.reduce((sum, x) => sum + money(x.grandTotal), 0),
@@ -163,6 +208,8 @@ export async function getAdminReportOverview(filters) {
   // ── Employee rows ──────────────────────────────────────────────────────────
   const employeeRows = employees.map((employee) => {
     const eSales = sales.filter((sale) => id(sale.employee) === id(employee));
+    const eLosses = losses.filter((l) => id(l.employee) === id(employee));
+    const eLossTotal = eLosses.reduce((sum, l) => sum + money(l.lossAmount), 0);
     return {
       id: id(employee), employee: employee.fullName, store: name(employee.store),
       role:             employee.user?.role || "Employee",
@@ -173,6 +220,9 @@ export async function getAdminReportOverview(filters) {
       adjustmentCount:  priceAdjustments.filter((a) => id(a.employee) === id(employee)).length,
       productsSold:     eSales.reduce((sum, x) => sum + x.items.length, 0),
       lastActivity:     eSales[0]?.createdAt || employee.updatedAt,
+      lossTotal:        eLossTotal,
+      lossTransactions: new Set(eLosses.map((l) => id(l.sale))).size,
+      lossRate:         eSales.length > 0 ? Number(((new Set(eLosses.map((l) => id(l.sale))).size / eSales.length) * 100).toFixed(2)) : 0,
     };
   }).sort((a, b) => b.revenue - a.revenue);
 
@@ -225,6 +275,27 @@ export async function getAdminReportOverview(filters) {
     };
   });
 
+  // ── Loss rows (Loss Management) ─────────────────────────────────────────────
+  const lossRows = losses.map((l) => ({
+    id:             id(l),
+    lossId:         id(l),
+    date:           l.createdAt,
+    saleId:         l.saleNo,
+    saleRef:        id(l.sale),
+    store:          name(l.store),
+    employee:       name(l.employee),
+    product:        l.productName,
+    imei:           l.imei || l.sku || "",
+    costBasis:      money(l.costBasis),
+    originalPrice:  money(l.originalSellingPrice),
+    discount:       money(l.discountAmount),
+    finalPrice:      money(l.effectiveSellingAmount),
+    loss:           money(l.lossAmount),
+    lossPercent:    money(l.lossPercentage),
+    reason:         l.lossType,
+    status:         l.lossStatus,
+  }));
+
   // ── Adjustment category summary ────────────────────────────────────────────
   const adjustmentByCategory = priceAdjustments.reduce((acc, adj) => {
     const cat = adj.reasonCategory || "other";
@@ -256,9 +327,16 @@ export async function getAdminReportOverview(filters) {
       netProfit,
       adjustmentCount:       priceAdjustments.length,
       exchangeDeviceCount:   exchangeBuybacks.length,
+      // ── Loss Management ──────────────────────────────────────────────────
+      totalLoss,
+      lossItemCount,
+      lossTransactionCount,
+      averageLoss,
+      totalProfit,
+      netGrossResult,
     },
     storePerformance,
-    trends: groupTrend(sales, buybacks, expenses),
+    trends: groupTrend(sales, buybacks, expenses, losses),
     reports: {
       sales:        saleRows,
       inventory:    inventoryRows,
@@ -266,6 +344,7 @@ export async function getAdminReportOverview(filters) {
       transfers:    transferRows,
       customers:    customerRows,
       employees:    employeeRows,
+      losses:       lossRows,
       buybacks:     buybacks.map((x) => ({
         id: id(x), buybackId: id(x), jobNumber: x.jobNo || "",
         customer: name(x.customer, x.customerName), device: `${x.brand} ${x.model}`, imei: x.imei,
@@ -303,6 +382,9 @@ export async function getAdminReportOverview(filters) {
         netProfit,
         outstandingPayments,
         adjustmentByCategory,
+        totalLoss,
+        totalProfit,
+        netGrossResult,
       },
     },
   };
@@ -357,6 +439,22 @@ export async function streamReportPdf(res, payload, meta) {
   if (payload.reports?.exchanges?.length) {
     doc.moveDown().fontSize(13).text("Exchange Devices");
     doc.fontSize(9).text(`Devices received: ${payload.reports.exchanges.length} | Total value: Rs ${money(payload.kpis.totalExchangeValue).toFixed(2)}`);
+  }
+
+  // Loss summary
+  if (payload.kpis.totalLoss !== undefined) {
+    doc.moveDown().fontSize(13).text("Loss Summary");
+    doc.fontSize(9).text(`Total Loss: Rs ${money(payload.kpis.totalLoss).toFixed(2)} | Loss Transactions: ${payload.kpis.lossTransactionCount || 0} | Loss Items: ${payload.kpis.lossItemCount || 0} | Avg Loss: Rs ${money(payload.kpis.averageLoss).toFixed(2)}`);
+    doc.fontSize(9).text(`Total Profit: Rs ${money(payload.kpis.totalProfit).toFixed(2)} | Net Gross Result: Rs ${money(payload.kpis.netGrossResult).toFixed(2)}`);
+    if (payload.reports?.losses?.length) {
+      const byReason = payload.reports.losses.reduce((acc, l) => {
+        acc[l.reason] = (acc[l.reason] || 0) + Number(l.loss || 0);
+        return acc;
+      }, {});
+      Object.entries(byReason).forEach(([reason, amount]) => {
+        doc.fontSize(9).text(`${reason}: Rs ${money(amount).toFixed(2)}`);
+      });
+    }
   }
 
   doc.end();

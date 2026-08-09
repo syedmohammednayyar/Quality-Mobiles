@@ -4,11 +4,32 @@ import { getAdminReportOverview, listStores, type ApiStore } from "../services/a
 import type { User } from "../types";
 import "./Reports.css";
 
-type Tab = "stores" | "sales" | "inventory" | "movements" | "transfers" | "customers" | "employees" | "buybacks" | "financial";
-const tabs: Array<[Tab, string]> = [["stores", "Stores"], ["sales", "Sales"], ["inventory", "Inventory"], ["movements", "Product Movement"], ["transfers", "Transfers"], ["customers", "Customers"], ["employees", "Employees"], ["buybacks", "Buybacks"], ["financial", "Financial"]];
+type Tab = "stores" | "sales" | "inventory" | "movements" | "transfers" | "customers" | "employees" | "buybacks" | "financial" | "losses";
+const tabs: Array<[Tab, string]> = [["stores", "Stores"], ["sales", "Sales"], ["inventory", "Inventory"], ["movements", "Product Movement"], ["transfers", "Transfers"], ["customers", "Customers"], ["employees", "Employees"], ["buybacks", "Buybacks"], ["financial", "Financial"], ["losses", "Losses"]];
+const LOSS_TYPES = ["DISCOUNT_BELOW_COST", "BUYBACK_RESALE_LOSS", "CLEARANCE_SALE", "PRICE_ADJUSTMENT", "DAMAGED_STOCK", "OTHER"];
+// Only the KPI cards relevant to the currently selected report type are shown —
+// keys reference overview.kpis (server-computed, already store/date scoped).
+const KPI_SETS: Record<Tab, string[]> = {
+  stores: ["totalSales", "grossRevenue", "netRevenue", "totalCustomers", "totalEmployees", "inventoryValue"],
+  sales: ["totalSales", "netRevenue", "totalPriceAdjustments", "totalExchangeValue", "netProfit", "totalLoss"],
+  inventory: ["inventoryValue", "lowStockProducts", "productsSold", "totalTransfers"],
+  movements: ["totalTransfers", "lowStockProducts"],
+  transfers: ["totalTransfers"],
+  customers: ["totalCustomers", "netRevenue"],
+  employees: ["totalEmployees", "adjustmentCount"],
+  buybacks: ["totalBuybacks", "buybackCost", "exchangeDeviceCount"],
+  financial: ["grossRevenue", "netRevenue", "totalExpenses", "netProfit", "outstandingPayments", "buybackCost"],
+  losses: ["totalLoss", "lossItemCount", "lossTransactionCount", "averageLoss", "totalProfit", "netGrossResult"],
+};
 const money = (value: unknown) => `Rs ${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 const pretty = (key: string) => key.replace(/([A-Z])/g, " $1").replace(/^./, (x) => x.toUpperCase());
-const display = (key: string, value: unknown) => /revenue|value|price|profit|amount|cost|spending|expenses|payments/i.test(key) ? money(value) : value ? String(value) : "-";
+const isMoneyKey = (key: string) => !/percent/i.test(key) && /revenue|value|price|profit|amount|cost|spending|expenses|payments|loss|discount|result/i.test(key);
+const isDateKey = (key: string) => /date|time|createdAt|updatedAt/i.test(key);
+const display = (key: string, value: unknown) => {
+  if (value === null || value === undefined || value === "") return "-";
+  if (isDateKey(key)) { const d = new Date(String(value)); return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString(); }
+  return isMoneyKey(key) ? money(value) : String(value);
+};
 const csvEscape = (value: unknown) => {
   const text = String(value ?? "");
   if (text.includes(",") || text.includes('"') || text.includes("\n")) {
@@ -16,6 +37,52 @@ const csvEscape = (value: unknown) => {
   }
   return text;
 };
+const slugify = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+// Explicit, ordered CSV columns per report type — [rowKey, "Header Label"].
+// Exporting a curated business-meaningful set instead of dumping whatever
+// keys happen to be on the row object. Tabs without an entry here fall back
+// to the auto-derived columns.
+const CSV_COLUMNS: Partial<Record<Tab, Array<[string, string]>>> = {
+  sales: [
+    ["date", "Date"], ["saleId", "Sale ID"], ["jobNumber", "Job Number"],
+    ["product", "Product"], ["imei", "IMEI"], ["customer", "Customer"],
+    ["store", "Store"], ["employee", "Employee"],
+    ["listPrice", "List Price"], ["billedPrice", "Billed Price"],
+    ["adjustmentDelta", "Price Adjustment"], ["amount", "Final Amount"],
+    ["paymentMethod", "Payment Method"], ["status", "Status"],
+  ],
+  losses: [
+    ["date", "Date"], ["lossId", "Loss ID"], ["saleId", "Bill Number"],
+    ["store", "Store"], ["employee", "Employee"], ["product", "Product"],
+    ["imei", "IMEI / SKU"], ["costBasis", "Cost Basis"],
+    ["originalPrice", "Original Price"], ["discount", "Discount"],
+    ["finalPrice", "Final Price"], ["loss", "Loss"], ["lossPercent", "Loss %"],
+    ["reason", "Reason"], ["status", "Status"],
+  ],
+  inventory: [
+    ["jobNumber", "Job Number"], ["brand", "Brand"], ["model", "Model"],
+    ["imei", "IMEI"], ["store", "Store"],
+    ["purchasePrice", "Purchase Price"], ["sellingPrice", "Selling Price"],
+    ["status", "Stock Status"], ["transferStatus", "Transfer Status"],
+  ],
+  buybacks: [
+    ["date", "Date"], ["buybackId", "Buyback ID"], ["jobNumber", "Job Number"],
+    ["customer", "Customer"], ["device", "Device"], ["imei", "IMEI"],
+    ["condition", "Condition"], ["buybackPrice", "Buyback Price"],
+    ["resalePrice", "Resale Price"], ["profit", "Profit"], ["store", "Store"],
+  ],
+  stores: [
+    ["storeCode", "Store Code"], ["storeName", "Store Name"],
+    ["grossRevenue", "Gross Revenue"], ["revenue", "Net Revenue"],
+    ["priceAdjustments", "Price Adjustments"], ["exchangeValue", "Exchange Value"],
+    ["sales", "Sales"], ["productsSold", "Products Sold"],
+    ["inventoryValue", "Inventory Value"], ["buybackValue", "Buyback Value"],
+    ["employees", "Employees"],
+  ],
+};
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const CURRENT_YEAR = new Date().getFullYear();
+const YEARS = Array.from({ length: 6 }, (_, i) => CURRENT_YEAR - i);
 
 const Reports: React.FC<{ user: User }> = ({ user }) => {
   const [stores, setStores] = useState<ApiStore[]>([]);
@@ -28,55 +95,165 @@ const Reports: React.FC<{ user: User }> = ({ user }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [overview, setOverview] = useState<any>(null);
+  const [lossEmployeeFilter, setLossEmployeeFilter] = useState("");
+  const [lossTypeFilter, setLossTypeFilter] = useState("");
+  const [lossStatusFilter, setLossStatusFilter] = useState("");
+  const [viewRow, setViewRow] = useState<Record<string, unknown> | null>(null);
+  const [month, setMonth] = useState(String(new Date().getMonth() + 1));
+  const [year, setYear] = useState(String(new Date().getFullYear()));
+
+  // Client-side guard so an obviously invalid range never even hits the API
+  // (the backend validates independently and is still the final authority).
+  const rangeError = quickRange === "custom" && fromDate && toDate && fromDate > toDate
+    ? "From date cannot be after To date."
+    : "";
 
   const filters = useMemo(() => ({
-    quickRange: quickRange as any, fromDate: fromDate || undefined, toDate: toDate || undefined,
+    quickRange: quickRange as any,
+    fromDate: fromDate || undefined,
+    toDate: toDate || undefined,
+    month: quickRange === "month_year" ? month : undefined,
+    year: quickRange === "month_year" ? year : undefined,
     storeIds: user.role === "Manager" && user.assignedStoreId ? [user.assignedStoreId] : selectedStore ? [selectedStore] : [],
-  }), [quickRange, fromDate, toDate, selectedStore, user.assignedStoreId, user.role]);
+  }), [quickRange, fromDate, toDate, month, year, selectedStore, user.assignedStoreId, user.role]);
 
   useEffect(() => { void listStores().then((rows) => setStores(rows.filter((x) => x.is_active))); }, []);
   useEffect(() => {
+    // Don't fire a request we already know is invalid, or an incomplete
+    // custom range (both dates required).
+    if (rangeError) return;
+    if (quickRange === "custom" && (!fromDate || !toDate)) return;
     void (async () => {
       try { setLoading(true); setError(""); setOverview(await getAdminReportOverview(filters)); }
       catch (e) { setError(e instanceof Error ? e.message : "Failed to load reports"); }
       finally { setLoading(false); }
     })();
-  }, [filters]);
+  }, [filters, rangeError, quickRange, fromDate, toDate]);
 
   const rows = useMemo(() => {
     if (!overview) return [];
-    const source = tab === "stores" ? overview.storePerformance : tab === "financial" ? [overview.reports.financial] : overview.reports[tab];
+    let source = tab === "stores" ? overview.storePerformance : tab === "financial" ? [overview.reports.financial] : overview.reports[tab];
+    if (tab === "losses") {
+      if (lossEmployeeFilter) source = source.filter((row: any) => row.employee === lossEmployeeFilter);
+      if (lossTypeFilter) source = source.filter((row: any) => row.reason === lossTypeFilter);
+      if (lossStatusFilter) source = source.filter((row: any) => row.status === lossStatusFilter);
+    }
     const query = search.trim().toLowerCase();
     return query ? source.filter((row: any) => Object.values(row).some((value) => String(value || "").toLowerCase().includes(query))) : source;
-  }, [overview, search, tab]);
+  }, [overview, search, tab, lossEmployeeFilter, lossTypeFilter, lossStatusFilter]);
+
+  const lossEmployees = useMemo(() => {
+    if (!overview) return [];
+    return Array.from(new Set((overview.reports.losses || []).map((row: any) => row.employee).filter(Boolean))) as string[];
+  }, [overview]);
+
+  // Filename documents exactly what's in the file: report type + store + date
+  // scope \u2014 matches the CRITICAL rule that the export mirrors the current view.
+  const exportFileName = useMemo(() => {
+    const storeLabel = user.role === "Manager"
+      ? slugify(stores.find((s) => s.id === user.assignedStoreId)?.name || "my-store")
+      : selectedStore ? slugify(stores.find((s) => s.id === selectedStore)?.name || "store") : "all-stores";
+    const dateLabel = quickRange === "custom"
+      ? `${fromDate || "start"}_to_${toDate || "end"}`
+      : quickRange === "month_year"
+        ? (month === "all" ? String(year) : `${slugify(MONTHS[Number(month) - 1] || "")}-${year}`)
+        : quickRange;
+    return `${tab}-report_${storeLabel}_${dateLabel}.csv`;
+  }, [tab, user.role, user.assignedStoreId, selectedStore, stores, quickRange, fromDate, toDate, month, year]);
+
+  // Human-readable description of the active scope, reused by the empty state
+  // so the user can see exactly which filters produced zero rows.
+  const scopeLabel = useMemo(() => {
+    const storeName = user.role === "Manager"
+      ? (stores.find((s) => s.id === user.assignedStoreId)?.name || "your store")
+      : selectedStore ? (stores.find((s) => s.id === selectedStore)?.name || "the selected store") : "all stores";
+    const dateLabel = quickRange === "custom"
+      ? `${fromDate || "?"} to ${toDate || "?"}`
+      : quickRange === "month_year"
+        ? (month === "all" ? String(year) : `${MONTHS[Number(month) - 1] || ""} ${year}`)
+        : pretty(quickRange).toLowerCase();
+    return `${dateLabel} · ${storeName}`;
+  }, [quickRange, fromDate, toDate, month, year, selectedStore, stores, user.role, user.assignedStoreId]);
 
   const exportSheet = () => {
     if (!rows.length) return;
-    const columns = Object.keys(rows[0]).filter((x) => x !== "id");
-    const csv = [columns.map(pretty), ...rows.map((row: any) => columns.map((key) => csvEscape(row[key] ?? "")))].map((line) => line.join(",")).join("\n");
+    // Curated columns when defined for this report type, else derive from the
+    // row shape. Either way the DATA is exactly `rows` \u2014 the same filtered,
+    // searched set currently rendered in the table.
+    const defined = CSV_COLUMNS[tab];
+    const columns: Array<[string, string]> = defined
+      ? defined.filter(([key]) => key in rows[0])
+      : Object.keys(rows[0]).filter((x) => x !== "id").map((key) => [key, pretty(key)]);
+
+    const csv = [
+      columns.map(([, label]) => csvEscape(label)),
+      ...rows.map((row: any) => columns.map(([key]) => csvEscape(row[key] ?? ""))),
+    ].map((line) => line.join(",")).join("\n");
+
     const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" }));
-    const link = document.createElement("a"); link.href = url; link.download = `${tab}-report.csv`; link.click(); URL.revokeObjectURL(url);
+    const link = document.createElement("a"); link.href = url; link.download = exportFileName; link.click(); URL.revokeObjectURL(url);
   };
 
   return <div className="reports-page">
-    <header className="reports-topbar"><div><h1>Business Control Center</h1><p>{user.role === "Admin" ? "Complete visibility across every Quality Mobiles store." : "Performance and operations for your assigned store."}</p></div><div className="reports-export"><button onClick={() => exportSheet()}>Export CSV</button><button onClick={() => window.print()}>Print</button></div></header>
+    <header className="module-header reports-topbar"><div><h1>Business Control Center</h1><p>{user.role === "Admin" ? "Complete visibility across every Quality Mobiles store." : "Performance and operations for your assigned store."}</p></div><div className="reports-export"><button onClick={() => exportSheet()}>Export CSV</button><button onClick={() => window.print()}>Print</button></div></header>
+    <nav className="reports-tabs reports-tabs-top">{tabs.map(([key, label]) => <button className={tab === key ? "active" : ""} key={key} onClick={() => setTab(key)}>{label}</button>)}</nav>
     <section className="reports-filters">
       <label><span>Store</span><select value={user.role === "Manager" ? user.assignedStoreId : selectedStore} onChange={(e) => setSelectedStore(e.target.value)} disabled={user.role === "Manager"}><option value="">All Stores</option>{stores.map((store) => <option value={store.id} key={store.id}>{store.name}</option>)}</select></label>
-      <label><span>Date Range</span><select value={quickRange} onChange={(e) => setQuickRange(e.target.value)}><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="this_week">This Week</option><option value="this_month">This Month</option><option value="this_year">This Year</option><option value="custom">Custom</option></select></label>
+      <label><span>Date Range</span><select value={quickRange} onChange={(e) => setQuickRange(e.target.value)}>
+        <option value="today">Today</option>
+        <option value="yesterday">Yesterday</option>
+        <option value="this_week">This Week</option>
+        <option value="this_month">This Month</option>
+        <option value="last_month">Last Month</option>
+        <option value="this_year">This Year</option>
+        <option value="last_year">Last Year</option>
+        <option value="month_year">Month / Year</option>
+        <option value="custom">Custom Range</option>
+        <option value="all">All Time</option>
+      </select></label>
+      {quickRange === "month_year" && <>
+        <label><span>Month</span><select value={month} onChange={(e) => setMonth(e.target.value)}>
+          <option value="all">Whole Year</option>
+          {MONTHS.map((label, index) => <option key={label} value={String(index + 1)}>{label}</option>)}
+        </select></label>
+        <label><span>Year</span><select value={year} onChange={(e) => setYear(e.target.value)}>
+          {YEARS.map((y) => <option key={y} value={String(y)}>{y}</option>)}
+        </select></label>
+      </>}
       {quickRange === "custom" && <><label><span>From</span><input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></label><label><span>To</span><input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} /></label></>}
       <label className="reports-search"><span>Global Search</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Job, IMEI, customer, employee, sale..." /></label>
     </section>
-    {error && <p className="reports-error">{error}</p>}
-    {loading && <p className="reports-status">Loading business intelligence...</p>}
+    {rangeError && <p className="reports-error">{rangeError}</p>}
+    {error && !rangeError && <p className="reports-error">{error}</p>}
+    {loading && !rangeError && <p className="reports-status">Loading {pretty(tab).toLowerCase()} report...</p>}
     {overview && <>
-      <section className="reports-kpi-grid">{Object.entries(overview.kpis).slice(0, 12).map(([key, value]) => <article className="reports-kpi-card" key={key}><p>{pretty(key)}</p><h3>{/revenue|value|cost|expenses|payments/i.test(key) ? money(value) : Number(value || 0).toLocaleString()}</h3></article>)}</section>
+      <section className="reports-kpi-grid">{(KPI_SETS[tab] || []).filter((key) => overview.kpis[key] !== undefined).map((key) => <article className={`reports-kpi-card${/loss/i.test(key) ? " loss" : ""}`} key={key}><p>{pretty(key)}</p><h3>{isMoneyKey(key) ? money(overview.kpis[key]) : Number(overview.kpis[key] || 0).toLocaleString()}</h3></article>)}</section>
       <section className="reports-analytics">
         <article><h2>Revenue Trend</h2><ResponsiveContainer width="100%" height={260}><LineChart data={overview.trends}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" /><YAxis /><Tooltip /><Legend /><Line dataKey="sales" stroke="#1677a6" strokeWidth={2} /><Line dataKey="buybacks" stroke="#e3a226" strokeWidth={2} /></LineChart></ResponsiveContainer></article>
         <article><h2>Store Comparison</h2><ResponsiveContainer width="100%" height={260}><BarChart data={overview.storePerformance}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="storeName" /><YAxis /><Tooltip /><Bar dataKey="revenue" fill="#1677a6" /><Bar dataKey="inventoryValue" fill="#e3a226" /></BarChart></ResponsiveContainer></article>
       </section>
-      <nav className="reports-tabs">{tabs.map(([key, label]) => <button className={tab === key ? "active" : ""} key={key} onClick={() => setTab(key)}>{label}</button>)}</nav>
-      <section className="reports-table-wrap"><table className="reports-table"><thead><tr>{rows[0] && Object.keys(rows[0]).filter((x) => x !== "id").map((key) => <th key={key}>{pretty(key)}</th>)}</tr></thead><tbody>{rows.map((row: any, index: number) => <tr key={row.id || index}>{Object.entries(row).filter(([key]) => key !== "id").map(([key, value]) => <td key={key}>{display(key, value)}</td>)}</tr>)}{!rows.length && <tr><td className="reports-empty">No records match the selected filters.</td></tr>}</tbody></table></section>
+      {tab === "losses" && <section className="reports-filters">
+        <label><span>Employee</span><select value={lossEmployeeFilter} onChange={(e) => setLossEmployeeFilter(e.target.value)}><option value="">All Employees</option>{lossEmployees.map((emp) => <option key={emp} value={emp}>{emp}</option>)}</select></label>
+        <label><span>Loss Type</span><select value={lossTypeFilter} onChange={(e) => setLossTypeFilter(e.target.value)}><option value="">All Types</option>{LOSS_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}</select></label>
+        <label><span>Status</span><select value={lossStatusFilter} onChange={(e) => setLossStatusFilter(e.target.value)}><option value="">All Statuses</option><option value="active">Active</option><option value="reversed">Reversed</option></select></label>
+      </section>}
+      <section className="reports-table-wrap"><table className="reports-table"><thead><tr>{rows[0] && Object.keys(rows[0]).filter((x) => x !== "id").map((key) => <th key={key}>{pretty(key)}</th>)}<th></th></tr></thead><tbody>{rows.map((row: any, index: number) => <tr key={row.id || index}>{Object.entries(row).filter(([key]) => key !== "id").map(([key, value]) => <td key={key}>{display(key, value)}</td>)}<td><button type="button" className="reports-view-btn" onClick={() => setViewRow(row)}>View</button></td></tr>)}{!rows.length && <tr><td className="reports-empty" colSpan={12}><strong>No {pretty(tab).toLowerCase()} records found</strong><span>Nothing matches {scopeLabel}. Try changing the date range or store filter.</span></td></tr>}</tbody></table></section>
     </>}
+
+    {viewRow && (
+      <div className="reports-drawer-overlay" onClick={() => setViewRow(null)}>
+        <div className="reports-drawer" onClick={(e) => e.stopPropagation()}>
+          <div className="reports-drawer-head"><h2>{pretty(tab)} Details</h2><button type="button" onClick={() => setViewRow(null)} aria-label="Close">×</button></div>
+          <div className="reports-drawer-body">
+            <dl>
+              {Object.entries(viewRow).filter(([key]) => key !== "id").map(([key, value]) => (
+                <React.Fragment key={key}><dt>{pretty(key)}</dt><dd>{display(key, value)}</dd></React.Fragment>
+              ))}
+            </dl>
+          </div>
+        </div>
+      </div>
+    )}
   </div>;
 };
 export default Reports;

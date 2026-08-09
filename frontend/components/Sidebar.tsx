@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { User } from '../types';
 import LogoShield from './LogoShield';
@@ -28,12 +28,24 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen, user, onLogout }) 
   const location = useLocation();
   const [expandedSections, setExpandedSections] = useState<string[]>(['section-0', 'section-1']);
 
+  // Mobile/tablet off-canvas drawer: Escape closes it (no-op on desktop,
+  // where the sidebar is always visible and isOpen has no visual effect).
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsOpen(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, setIsOpen]);
+
   const navigationItems: NavSection[] = [
     {
       label: 'Main',
       items: [
         { label: 'Dashboard', icon: 'DB', path: '/dashboard', roles: ['Admin', 'Manager'] },
         { label: 'Reports', icon: 'RP', path: '/reports', roles: ['Admin', 'Manager'] },
+        { label: 'Loss Management', icon: 'LM', path: '/losses', roles: ['Admin', 'Manager'] },
       ],
     },
     {

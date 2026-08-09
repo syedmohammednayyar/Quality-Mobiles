@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import {
-  BulkInventory, Customer, ExchangeDevice, PriceAdjustment,
-  Sale, SerializedInventory, StockLedger, Store,
+  BulkInventory, Customer, ExchangeDevice, LossRecord, PriceAdjustment,
+  Product, Sale, SerializedInventory, StockLedger, Store,
 } from "../../db/models.js";
 
 const oid   = (value) => new mongoose.Types.ObjectId(value);
@@ -72,17 +72,35 @@ async function exchangeSummary(from, storeId) {
   return rows[0] || { count: 0, totalValue: 0, totalMarket: 0 };
 }
 
+// ─── Loss summary: KPI figures for a period (Loss Management) ─────────────────
+async function lossSummary(from, storeId) {
+  const rows = await LossRecord.aggregate([
+    { $match: { ...storeMatch(storeId), lossStatus: "active", createdAt: { $gte: from } } },
+    { $group: { _id: null, totalLoss: { $sum: "$lossAmount" }, itemCount: { $sum: 1 }, saleIds: { $addToSet: "$sale" } } },
+  ]);
+  const row = rows[0] || {};
+  const totalLoss = money(row.totalLoss);
+  const itemCount = row.itemCount || 0;
+  return {
+    totalLoss,
+    itemCount,
+    transactionCount: row.saleIds?.length || 0,
+    averageLoss: itemCount > 0 ? Number((totalLoss / itemCount).toFixed(2)) : 0,
+  };
+}
+
 export async function getDashboardSummary(storeId) {
   const storeFilter = storeMatch(storeId);
   const today       = startOfDay();
-  const sevenDaysAgo = new Date(today); sevenDaysAgo.setDate(today.getDate() - 6);
 
   const [
     todaySales, weekSales, monthSales,
     todayAdjustments, monthAdjustments,
     monthExchanges,
     customers, available, buybackInventory, bulkLow, transfers,
-    stores, recentSales, ledger, trend, revenueMix,
+    stores, recentSales, ledger,
+    todayLoss, weekLoss, monthLoss, recentLosses,
+    underRepairBuybacks, pendingPaymentsAgg,
   ] = await Promise.all([
     saleSummary(today,          storeId),
     saleSummary(startOfWeek(),  storeId),
@@ -104,27 +122,18 @@ export async function getDashboardSummary(storeId) {
     Store.find(storeId ? { _id: oid(storeId), isActive: true } : { isActive: true }).lean(),
     Sale.find({ ...storeFilter, status: "completed" }).populate("store customer items.product").sort({ createdAt: -1 }).limit(8).lean(),
     StockLedger.find({ ...storeFilter }).select("movementType").sort({ createdAt: -1 }).limit(25).lean(),
+    lossSummary(today, storeId),
+    lossSummary(startOfWeek(), storeId),
+    lossSummary(startOfMonth(), storeId),
+    LossRecord.find({ ...storeFilter, lossStatus: "active" })
+      .populate("store", "name").populate("employee", "fullName").populate("product", "name jobId imei")
+      .sort({ createdAt: -1 }).limit(8).lean(),
+    // Buyback/used devices physically held but not sellable yet.
+    Product.countDocuments({ ...storeFilter, category: "used_phone", inventoryStatus: "under_repair", isActive: true }),
+    // Outstanding money owed on completed sales (grandTotal not fully paid).
     Sale.aggregate([
-      { $match: { ...storeFilter, status: "completed", createdAt: { $gte: sevenDaysAgo } } },
-      {
-        $group: {
-          _id:             { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-          grossRevenue:    { $sum: "$originalAmount" },
-          netRevenue:      { $sum: "$grandTotal" },
-          adjustments:     { $sum: "$priceAdjustmentTotal" },
-          exchanges:       { $sum: "$exchangeTotal" },
-          sales:           { $sum: 1 },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]),
-    Sale.aggregate([
-      { $match: { ...storeFilter, status: "completed", createdAt: { $gte: startOfMonth() } } },
-      { $unwind: "$items" },
-      { $lookup: { from: "products", localField: "items.product", foreignField: "_id", as: "product" } },
-      { $unwind: "$product" },
-      { $group: { _id: "$product.category", revenue: { $sum: "$items.lineAdjustedTotal" }, units: { $sum: "$items.quantity" } } },
-      { $sort: { revenue: -1 } },
+      { $match: { ...storeFilter, status: "completed", paymentStatus: { $in: ["pending", "partial"] } } },
+      { $group: { _id: null, outstanding: { $sum: { $subtract: ["$grandTotal", "$amountPaid"] } }, count: { $sum: 1 } } },
     ]),
   ]);
 
@@ -138,9 +147,10 @@ export async function getDashboardSummary(storeId) {
   ]);
 
   const storePerformance = await Promise.all(stores.map(async (store) => {
-    const [summary, inventory] = await Promise.all([
+    const [summary, inventory, storeLoss] = await Promise.all([
       saleSummary(startOfMonth(), store._id),
       SerializedInventory.find({ store: store._id, status: "in_stock" }).populate("product").lean(),
+      lossSummary(startOfMonth(), store._id),
     ]);
     return {
       store:          store.name,
@@ -151,8 +161,15 @@ export async function getDashboardSummary(storeId) {
       exchangeTotal:  summary.exchangeTotal,
       sales:          summary.sales,
       inventoryValue: inventory.reduce((sum, row) => sum + money(row.product?.purchasePrice || row.product?.unitPrice), 0),
+      lossAmount:     storeLoss.totalLoss,
     };
   }));
+
+  const lossByStore = stores.map((store, index) => ({
+    storeId:   String(store._id),
+    storeName: store.name,
+    lossAmount: storePerformance[index]?.lossAmount || 0,
+  })).sort((a, b) => b.lossAmount - a.lossAmount);
 
   return {
     kpis: {
@@ -173,15 +190,41 @@ export async function getDashboardSummary(storeId) {
       buybackInventory:   money(buybackInventory[0]?.count),
       totalCustomers:     customers,
       lowStockProducts:   bulkLow,
-      pendingTransfers:   transfers,
+      underRepairBuybacks: underRepairBuybacks,
+      pendingPayments:    money(pendingPaymentsAgg[0]?.outstanding),
+      pendingPaymentBills: pendingPaymentsAgg[0]?.count || 0,
       // Today adjustments count
       todayAdjustmentsCount: todayAdjustments.reduce((s, r) => s + r.count, 0),
+      // Loss Management (month-to-date headline figures)
+      totalLoss:            monthLoss.totalLoss,
+      lossTransactionCount: monthLoss.transactionCount,
+      lossItemCount:        monthLoss.itemCount,
+      averageLoss:          monthLoss.averageLoss,
     },
     salesOverview: {
       today: todaySales,
       week:  weekSales,
       month: monthSales,
     },
+    lossOverview: {
+      today: todayLoss,
+      week:  weekLoss,
+      month: monthLoss,
+    },
+    lossByStore:  lossByStore,
+    recentLosses: recentLosses.map((loss) => ({
+      id:           String(loss._id),
+      saleNo:       loss.saleNo,
+      product:      loss.productName || loss.product?.name || "",
+      imei:         loss.imei || loss.product?.imei || "",
+      store:        loss.store?.name || "",
+      employee:     loss.employee?.fullName || "",
+      costBasis:    money(loss.costBasis),
+      soldAmount:   money(loss.effectiveSellingAmount),
+      lossAmount:   money(loss.lossAmount),
+      reason:       loss.lossType,
+      time:         loss.createdAt,
+    })),
     adjustmentBreakdown: {
       today:         todayAdjustments,
       month:         monthAdjustments,
@@ -196,16 +239,6 @@ export async function getDashboardSummary(storeId) {
       recentlyTransferred:ledger.filter((x) => x.movementType.startsWith("transfer")).length,
     },
     storePerformance,
-    trend: trend.map((x) => ({
-      date:         x._id,
-      grossRevenue: x.grossRevenue || 0,
-      netRevenue:   x.netRevenue   || 0,
-      revenue:      x.netRevenue   || 0,
-      adjustments:  x.adjustments  || 0,
-      exchanges:    x.exchanges    || 0,
-      sales:        x.sales,
-    })),
-    revenueMix: revenueMix.map((row) => ({ category: String(row._id || "other").replace("_", " "), revenue: row.revenue, units: row.units })),
     recentSales: recentSales.map((sale) => ({
       id:          String(sale._id),
       jobNumber:   sale.items[0]?.product?.jobId || sale.jobNumber || sale.saleNo,

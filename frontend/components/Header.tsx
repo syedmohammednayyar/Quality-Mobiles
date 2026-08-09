@@ -191,7 +191,7 @@ const Header: React.FC<HeaderProps> = ({
           </div>
 
           {showRenameModal && currentStore && canSwitchStore && (
-            <div style={{ position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(9, 12, 18, 0.52)', display: 'grid', placeItems: 'center', padding: 16 }}>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 'var(--z-modal)', background: 'rgba(9, 12, 18, 0.52)', display: 'grid', placeItems: 'center', padding: 16 }}>
               <div style={{ width: 'min(460px, 100%)', borderRadius: 20, background: 'var(--bg-primary)', border: '1px solid var(--border-color)', boxShadow: '0 30px 80px rgba(0,0,0,0.28)', overflow: 'hidden' }}>
                 <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
                   <div>

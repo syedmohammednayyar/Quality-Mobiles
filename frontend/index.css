@@ -120,13 +120,35 @@
   --z-modal: 500;
   --z-tooltip: 1000;
   --z-notification: 2000;
+
+  /* App shell (sidebar / header / mobile drawer stacking) */
+  --sidebar-width: 300px;
+  --header-height: 64px;
+  --z-sidebar: var(--z-sticky);
+  --z-header: var(--z-fixed);
+  --z-sidebar-backdrop: 150;
+  --z-mobile-sidebar: var(--z-modal-backdrop);
+
+  /* Semantic status colors — badges/pills/tags (e.g. "Under Repair", "Ready
+     for Sale", "Sold") must always use these instead of a raw error/success/
+     warning token directly, so light and dark mode can each pick appropriate
+     background/text pairs independently (light-red-bg + dark-red-text in
+     light mode; dark-red-tinted-bg + light-red-text in dark mode). */
+  --status-success-bg: var(--color-success-50);
+  --status-success-text: var(--color-success-600);
+  --status-error-bg: var(--color-error-50);
+  --status-error-text: var(--color-error-600);
+  --status-warning-bg: var(--color-warning-50);
+  --status-warning-text: var(--color-warning-600);
+  --status-info-bg: var(--color-info-100);
+  --status-info-text: var(--color-info-500);
 }
 
 .session-warning-backdrop{position:fixed;inset:0;z-index:var(--z-modal);display:grid;place-items:center;padding:18px;background:rgba(15,23,42,.55)}
 .session-warning{width:min(440px,100%);padding:22px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-primary);box-shadow:var(--shadow-xl);color:var(--text-primary)}
 .session-warning h2{margin:0 0 8px;font-size:20px;letter-spacing:0}.session-warning p{margin:0 0 20px;color:var(--text-secondary)}
 .session-warning div{display:flex;justify-content:flex-end;gap:9px}.session-warning button{min-height:42px;padding:0 15px;border:1px solid var(--border-color);border-radius:7px;background:var(--bg-secondary);color:var(--text-primary);font:inherit;font-weight:800;cursor:pointer}
-.session-warning button.primary{border-color:var(--color-primary-600);background:var(--color-primary-600);color:#fff}
+.session-warning button.primary{border-color:var(--color-primary-600);background:var(--color-primary-600);color:var(--text-inverse)}
 
 * {
   margin: 0;
@@ -138,6 +160,21 @@ html {
   scroll-behavior: smooth;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* The authenticated dashboard's .app-shell (App.css) owns scrolling
+   internally — sidebar and main-content each get their own scroll container,
+   and .app-shell itself is capped to the viewport with overflow:hidden so the
+   document never needs to scroll behind it (that competing document-level
+   scroll was the root cause of the sidebar/header overlap bug). Height is set
+   here so the shell can rely on 100% down the tree; the unauthenticated
+   Login screen intentionally keeps normal body scroll on very small viewports
+   via its own min-height:100vh layout, so body itself is left free to scroll. */
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
 }
 
 body {
@@ -288,6 +325,67 @@ body {
   --text-tertiary: #94a3b8;
   --border-color: #334155;
   --border-dark: #475569;
+
+  /* Dark-tinted background + light foreground, not the light-mode pastel
+     pair reused verbatim — keeps status badges readable on a dark surface. */
+  --status-success-bg: color-mix(in srgb, var(--color-success-500) 22%, var(--bg-primary));
+  --status-success-text: #86efac;
+  --status-error-bg: color-mix(in srgb, var(--color-error-500) 22%, var(--bg-primary));
+  --status-error-text: #fca5a5;
+  --status-warning-bg: color-mix(in srgb, var(--color-warning-500) 22%, var(--bg-primary));
+  --status-warning-text: #fcd34d;
+  --status-info-bg: color-mix(in srgb, var(--color-info-500) 22%, var(--bg-primary));
+  --status-info-text: #93c5fd;
+}
+
+/* ── Shared module header ──────────────────────────────────────────────────
+   Single source of truth for every module's page header (Dashboard, Reports,
+   Buyback, Inventory, Sales, User Management, POS, Loss Management) so they
+   share one height, padding, typography and spacing rhythm. Views apply
+   `.module-header` alongside their own class; module-specific extras (badges,
+   action buttons, store pickers) still live in the view's own stylesheet. */
+.module-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  min-height: 62px;
+  padding: 0;
+  color: var(--text-primary);
+}
+
+.module-header h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.2;
+  letter-spacing: 0;
+  color: var(--text-primary);
+}
+
+.module-header p {
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.module-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+  .module-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .module-header h1 {
+    font-size: 22px;
+  }
 }
 
 /* Shared Surface Helpers */

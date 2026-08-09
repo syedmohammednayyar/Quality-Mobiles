@@ -99,6 +99,57 @@ async function requireProduct(productId) {
   return product;
 }
 
+// ─── Cross-store stock for a single product ─────────────────────────────────
+// Powers the "Store Stock" section of the inventory detail popup, which needs
+// every store's quantity at once rather than just the currently-selected one.
+// Reads both inventory models (BulkInventory and the legacy StoreInventory
+// items array) the same way the rest of this module does, then merges them so
+// a store is never double-counted.
+export async function getProductStockByStore(productId) {
+  const product = toObjectId(productId, "PRODUCT_INVALID_ID");
+
+  const [stores, bulkRows, legacyDocs, serializedRows] = await Promise.all([
+    Store.find({ isActive: { $ne: false } }).sort({ name: 1 }).lean(),
+    BulkInventory.find({ product }).lean(),
+    StoreInventory.find({ "items.product": product }).lean(),
+    SerializedInventory.find({ product, status: "in_stock" }).select("store").lean(),
+  ]);
+
+  const byStore = new Map();
+  const bump = (storeId, quantity, minStockLevel) => {
+    const key = String(storeId);
+    const prev = byStore.get(key) || { quantity: 0, minStockLevel: 0 };
+    byStore.set(key, {
+      quantity: prev.quantity + Number(quantity || 0),
+      minStockLevel: Math.max(prev.minStockLevel, Number(minStockLevel || 0)),
+    });
+  };
+
+  bulkRows.forEach((row) => bump(row.store, row.quantity, row.minStockLevel));
+  serializedRows.forEach((row) => bump(row.store, 1, 0));
+  // Only fall back to the legacy items array for stores the newer models
+  // didn't already report, so the two never stack on top of each other.
+  legacyDocs.forEach((doc) => {
+    if (byStore.has(String(doc.store))) return;
+    const item = (doc.items || []).find((i) => String(i.product) === String(product));
+    if (item) bump(doc.store, item.quantity, item.minStockLevel);
+  });
+
+  const rows = stores.map((store) => {
+    const entry = byStore.get(String(store._id)) || { quantity: 0, minStockLevel: 0 };
+    return {
+      store_id: String(store._id),
+      store_code: store.code,
+      store_name: store.name,
+      quantity: entry.quantity,
+      min_stock_level: entry.minStockLevel,
+      stock_status: buildStatus(entry.quantity, entry.minStockLevel),
+    };
+  });
+
+  return { rows, total_stock: rows.reduce((sum, row) => sum + row.quantity, 0) };
+}
+
 export async function listActiveStores() {
   const stores = await Store.find({ isActive: { $ne: false } }).sort({ name: 1 });
   return stores.map((s) => ({
@@ -280,82 +331,68 @@ export async function transferStock(input) {
     const fromStore = toObjectId(input.fromStoreId, "STORE_INVALID_ID");
     const toStore = toObjectId(input.toStoreId, "STORE_INVALID_ID");
     const product = toObjectId(input.productId, "PRODUCT_INVALID_ID");
+    const quantity = input.quantity;
 
-    const sourceBulk = await BulkInventory.findOne(
-      { store: fromStore, product, quantity: { $gte: input.quantity } },
-    ).session(session);
-    let sourceLegacy = null;
+    // ── Decrement source stock by exactly `quantity` (not the whole row) ───
+    // Try BulkInventory first, then the legacy StoreInventory items-array
+    // model — same lookup order the rest of the module already uses to read
+    // stock — and keep whichever one we don't decrement in sync too, so a
+    // later read from either model sees the same number.
+    const decrementedBulk = await BulkInventory.findOneAndUpdate(
+      { store: fromStore, product, quantity: { $gte: quantity } },
+      { $inc: { quantity: -quantity }, $set: { updatedAt: new Date() } },
+      { session, returnDocument: "after" },
+    );
 
-    if (!sourceBulk) {
-      sourceLegacy = await StoreInventory.findOne(
-        {
-          store: fromStore,
-          items: {
-            $elemMatch: {
-              product,
-              quantity: { $gte: input.quantity },
-            },
-          },
-        },
-      ).session(session);
+    let decrementedLegacy = null;
+    if (!decrementedBulk) {
+      decrementedLegacy = await StoreInventory.findOneAndUpdate(
+        { store: fromStore, items: { $elemMatch: { product, quantity: { $gte: quantity } } } },
+        { $inc: { "items.$.quantity": -quantity }, $set: { updatedAt: new Date() } },
+        { session, returnDocument: "after" },
+      );
+    } else {
+      await StoreInventory.findOneAndUpdate(
+        { store: fromStore, "items.product": product },
+        { $inc: { "items.$.quantity": -quantity }, $set: { updatedAt: new Date() } },
+        { session },
+      );
     }
 
-    if (!sourceBulk && !sourceLegacy) {
+    if (!decrementedBulk && !decrementedLegacy) {
       throw new HttpError(409, "Insufficient stock for transfer", "TRANSFER_INSUFFICIENT_STOCK");
     }
 
-    await BulkInventory.deleteMany({ product, store: { $ne: fromStore } }).session(session);
-
-    const movedBulk = sourceBulk ? await BulkInventory.findOneAndUpdate(
-      { _id: sourceBulk._id },
+    // ── Increment destination stock by exactly `quantity` (upsert both models) ──
+    await BulkInventory.findOneAndUpdate(
+      { store: toStore, product },
       {
-        $set: {
-          store: toStore,
-          quantity: 1,
-          reservedQuantity: 0,
-          updatedAt: new Date(),
-          ...(input.userId ? { addedBy: input.userId } : {}),
-        },
+        $inc: { quantity },
+        $setOnInsert: { reservedQuantity: 0, minStockLevel: 0 },
+        $set: { updatedAt: new Date(), ...(input.userId ? { addedBy: input.userId } : {}) },
       },
-      { session, returnDocument: "after" },
-    ) : null;
+      { upsert: true, session },
+    );
 
-    if (!movedBulk) {
-      await BulkInventory.create([{
-        store: toStore,
-        product,
-        quantity: 1,
-        reservedQuantity: 0,
-        minStockLevel: 0,
-        addedBy: input.userId,
-      }], { session });
-    }
-
-    await StoreInventory.updateMany(
-      {},
-      {
-        $pull: { items: { product } },
-        $set: { updatedAt: new Date() },
-      },
+    const destLegacyUpdated = await StoreInventory.findOneAndUpdate(
+      { store: toStore, "items.product": product },
+      { $inc: { "items.$.quantity": quantity }, $set: { updatedAt: new Date() } },
       { session },
     );
-
-    await StoreInventory.findOneAndUpdate(
-      { store: toStore },
-      {
-        $push: {
-          items: {
-            product,
-            quantity: 1,
-            reservedQuantity: 0,
-            minStockLevel: 0,
-          },
+    if (!destLegacyUpdated) {
+      await StoreInventory.findOneAndUpdate(
+        { store: toStore },
+        {
+          $push: { items: { product, quantity, reservedQuantity: 0, minStockLevel: 0 } },
+          $set: { updatedAt: new Date() },
         },
-        $set: { updatedAt: new Date() },
-      },
-      { upsert: true, session, returnDocument: "after" },
-    );
+        { upsert: true, session },
+      );
+    }
 
+    // Product.store/storeName is a display convenience (most recent known
+    // location) — actual per-store quantities live in BulkInventory /
+    // StoreInventory above, so this reassignment never affects stock math.
     await Product.updateOne(
       { _id: product },
       {
@@ -374,22 +411,22 @@ export async function transferStock(input) {
         store: fromStore,
         product,
         movementType: "transfer_out",
-        quantity: input.quantity,
+        quantity,
         referenceType: "stock_transfer",
         referenceId,
         reason: input.reason,
-        note: input.reason,
+        note: input.notes || input.reason,
         createdBy: input.userId,
       },
       {
         store: toStore,
         product,
         movementType: "transfer_in",
-        quantity: input.quantity,
+        quantity,
         referenceType: "stock_transfer",
         referenceId,
         reason: input.reason,
-        note: input.reason,
+        note: input.notes || input.reason,
         createdBy: input.userId,
       },
     ], { session });
@@ -399,8 +436,9 @@ export async function transferStock(input) {
       from_store_id: input.fromStoreId,
       to_store_id: input.toStoreId,
       product_id: input.productId,
-      quantity: input.quantity,
+      quantity,
       reason: input.reason,
+      notes: input.notes || "",
     };
   });
 }

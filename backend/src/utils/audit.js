@@ -10,9 +10,12 @@ import { AuditLog } from "../db/models.js";
  * @param {string} [params.fieldName]
  * @param {*}      [params.oldValue]
  * @param {*}      [params.newValue]
+ * @param {Object} [params.oldValues] - multi-field diff (before), e.g. { unitPrice: 45999 }
+ * @param {Object} [params.newValues] - multi-field diff (after),  e.g. { unitPrice: 44999 }
+ * @param {string} [params.notes]     - free-text reason/remark for the change
  * @param {Object} [params.metadata] - arbitrary extra context
  */
-export async function writeAudit({ action, entityType, entityId, ctx = {}, fieldName, oldValue, newValue, metadata } = {}) {
+export async function writeAudit({ action, entityType, entityId, ctx = {}, fieldName, oldValue, newValue, oldValues, newValues, notes, metadata } = {}) {
   try {
     await AuditLog.create({
       user:       ctx.userId   || null,
@@ -24,6 +27,9 @@ export async function writeAudit({ action, entityType, entityId, ctx = {}, field
       fieldName:  fieldName || null,
       oldValue:   oldValue  ?? null,
       newValue:   newValue  ?? null,
+      oldValues:  oldValues || null,
+      newValues:  newValues || null,
+      notes:      notes || null,
       metadata:   metadata  || null,
       status:     'success',
     });

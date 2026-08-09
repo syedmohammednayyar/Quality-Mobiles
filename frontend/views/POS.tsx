@@ -25,6 +25,7 @@ type PosProduct = {
   storage: string;
   network: string;
   price: number;
+  purchasePrice: number;
   productType: string;
   inventoryStatus: 'ready' | 'under_repair' | string;
 };
@@ -92,6 +93,7 @@ const mapProduct = (product: ApiStoreInventoryRow): PosProduct => {
     storage: product.storage || '-',
     network: product.network_type || '-',
     price: Number(product.unit_price || product.final_price || 0),
+    purchasePrice: Number(product.purchase_price || 0),
     productType: product.category === 'used_phone' ? 'USED PHONE' : 'NEW',
     inventoryStatus: product.inventory_status || 'ready',
   };
@@ -110,6 +112,13 @@ interface CartItemRowProps {
 const CartItemRow: React.FC<CartItemRowProps> = ({ item, onPriceChange, onCategoryChange, onReasonChange, onRemove }) => {
   const billedPrice = item.adjustedPrice ?? item.price;
   const priceChanged = billedPrice !== item.price;
+  // Loss Management: client-side preview only (item-level cost vs. billed price).
+  // The backend is the sole financial authority — this never blocks the sale.
+  const hasCostBasis = item.purchasePrice > 0;
+  const isLossPreview = hasCostBasis && billedPrice < item.purchasePrice;
+  const isProfitPreview = hasCostBasis && billedPrice > item.purchasePrice;
+  const previewDelta = Math.abs(billedPrice - item.purchasePrice);
+  const previewPct = hasCostBasis ? Math.round((previewDelta / item.purchasePrice) * 100) : 0;
 
   return (
     <div className={`pos-cart-row${priceChanged ? ' price-adjusted' : ''}`}>
@@ -119,6 +128,13 @@ const CartItemRow: React.FC<CartItemRowProps> = ({ item, onPriceChange, onCatego
         {priceChanged && (
           <span className="pos-cart-original-price">
             List: Rs {toMoney(item.price)} &rarr; <em>adjusted −Rs {toMoney(item.price - billedPrice)}</em>
+          </span>
+        )}
+        {hasCostBasis && (
+          <span className={`pos-cost-indicator ${isLossPreview ? 'loss' : isProfitPreview ? 'profit' : 'even'}`}>
+            Cost: Rs {toMoney(item.purchasePrice)}
+            {isLossPreview && <> &middot; <strong>⚠ Loss Rs {toMoney(previewDelta)} ({previewPct}%)</strong></>}
+            {isProfitPreview && <> &middot; <strong>✓ Profit Rs {toMoney(previewDelta)}</strong></>}
           </span>
         )}
       </div>
@@ -268,6 +284,8 @@ const POS: React.FC<POSProps> = ({ user }) => {
   const adjustmentTotal   = useMemo(() => originalSubtotal - adjustedSubtotal, [originalSubtotal, adjustedSubtotal]);
   const exchangeTotal     = useMemo(() => exchangeDevices.reduce((sum, d) => sum + d.exchangeValue, 0), [exchangeDevices]);
   const finalAmount       = useMemo(() => Math.max(0, adjustedSubtotal - discount - exchangeTotal), [adjustedSubtotal, discount, exchangeTotal]);
+  // Loss Management: non-blocking preview of below-cost items in the cart (spec §9 — informational only)
+  const lossItemsInCart   = useMemo(() => cart.filter((item) => item.purchasePrice > 0 && (item.adjustedPrice ?? item.price) < item.purchasePrice), [cart]);
 
   // ── Cart mutations ──────────────────────────────────────────────────────
   const addToCart = (product: PosProduct) => {
@@ -434,6 +452,12 @@ const POS: React.FC<POSProps> = ({ user }) => {
         </div>
       )}
 
+      {lossItemsInCart.length > 0 && (
+        <div className="pos-alert warning">
+          ⚠ LOSS DETECTED — {lossItemsInCart.length} item{lossItemsInCart.length > 1 ? 's' : ''} in this bill are priced below cost. This will not block the sale, but it will be recorded in Loss Management.
+        </div>
+      )}
+
       <main className="pos-workspace">
 
         {/* ── Products panel ────────────────────────────────────────────── */}
@@ -472,7 +496,10 @@ const POS: React.FC<POSProps> = ({ user }) => {
                 {filteredProducts.map((product) => (
                   <tr
                     key={product.id}
-                    onClick={() => product.inventoryStatus === 'ready' ? addToCart(product) : undefined}
+                    // Always route through addToCart — it owns the
+                    // "Under Repair cannot be sold" rule and surfaces the
+                    // reason, instead of the click silently doing nothing.
+                    onClick={() => addToCart(product)}
                     className={product.inventoryStatus === 'under_repair' ? 'pos-product-blocked' : ''}
                     title={product.inventoryStatus === 'under_repair' ? 'Under Repair items cannot be sold' : undefined}
                   >
@@ -546,7 +573,7 @@ const POS: React.FC<POSProps> = ({ user }) => {
             )}
 
             {showExchangeForm && (
-              <div style={{ position: 'fixed', inset: 0, zIndex: 40, background: 'rgba(9, 12, 18, 0.52)', display: 'grid', placeItems: 'center', padding: 16 }}>
+              <div style={{ position: 'fixed', inset: 0, zIndex: 'var(--z-modal)', background: 'rgba(9, 12, 18, 0.52)', display: 'grid', placeItems: 'center', padding: 16 }}>
                 <div style={{ width: 'min(860px, 100%)', borderRadius: 20, background: 'var(--bg-primary)', border: '1px solid var(--border-color)', boxShadow: '0 30px 80px rgba(0,0,0,0.28)', overflow: 'hidden' }}>
                   <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
                     <div>

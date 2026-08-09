@@ -1,9 +1,17 @@
+/* Desktop default: the sidebar is a normal, in-flow grid column (see
+   App.css .app-shell) — never `position: fixed` here, so it always
+   contributes its own width to the layout and can never float over/under
+   the header or main content. width:100% (not a fixed px value) means it
+   always exactly matches whatever width .app-shell's grid track gives it —
+   including 0 when collapsed — so it can never overflow that track. It
+   fills its grid row's full height and scrolls internally via .sidebar-nav.
+   Only the mobile/tablet media query below turns it into a fixed
+   off-canvas drawer with its own explicit width. */
 .sidebar {
-  position: fixed;
-  left: 0;
-  top: 64px;
-  height: calc(100vh - 64px);
-  width: 300px;
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
   background: linear-gradient(
     170deg,
     color-mix(in srgb, var(--bg-primary) 90%, var(--color-primary-50)) 0%,
@@ -14,10 +22,19 @@
   box-shadow: 14px 0 34px -26px rgba(15, 58, 92, 0.45);
   display: flex;
   flex-direction: column;
-  transition: transform 0.32s ease;
-  z-index: var(--z-fixed);
+  transition: transform 0.32s ease, opacity 0.2s ease;
+  z-index: var(--z-sidebar);
   overflow: hidden;
   backdrop-filter: blur(10px);
+}
+
+/* While the desktop grid column is animating down to 0 width, fade the
+   (now-squished) content out instead of letting it visibly compress. */
+@media (min-width: 1025px) {
+  .app-shell.sidebar-collapsed .sidebar {
+    opacity: 0;
+    pointer-events: none;
+  }
 }
 
 .sidebar::before {
@@ -44,24 +61,18 @@
   pointer-events: none;
 }
 
-.sidebar-open {
-  transform: translateX(0);
-}
-
+/* On desktop the sidebar is always visible and .sidebar-open/.sidebar-closed
+   are no-ops (no transform) — the off-canvas drawer behavior only exists
+   below the 1024px breakpoint, see the media query at the bottom of this file. */
+.sidebar-open,
 .sidebar-closed {
-  transform: translateX(-104%);
+  transform: none;
 }
 
+/* Backdrop only exists for the mobile/tablet off-canvas drawer — hidden on
+   desktop so it can never sit over the dashboard (see media query below). */
 .sidebar-overlay {
-  position: fixed;
-  top: 64px;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(15, 23, 42, 0.42);
-  z-index: calc(var(--z-fixed) - 1);
-  animation: fadeIn 0.2s ease-out;
-  backdrop-filter: blur(2px);
+  display: none;
 }
 
 .sidebar-header {
@@ -144,10 +155,17 @@
   box-shadow: var(--shadow-sm);
 }
 
+/* Internal scroll region: this is the ONLY part of the sidebar that scrolls.
+   min-height: 0 overrides the flex-item default (min-height: auto), which
+   would otherwise let this grow to fit all nav items instead of clipping to
+   the sidebar's available height — the classic cause of a scrollbar that
+   escapes its container. sidebar-header/.sidebar-footer stay fixed via
+   flex-shrink: 0 and never move when this scrolls. */
 .sidebar-nav {
   position: relative;
   z-index: 1;
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 14px 12px;
@@ -474,13 +492,41 @@
   }
 }
 
+/* Tablet/mobile: off-canvas drawer. The sidebar leaves the grid flow (App.css
+   collapses .app-shell to one column at this breakpoint too) and becomes a
+   fixed panel above a backdrop, shown/hidden purely by translateX. It starts
+   below the header (matches the header's own height) so the header is never
+   covered by the drawer or its backdrop, and stays above the backdrop so its
+   own internal scrollbar is never obscured. */
 @media (max-width: 1024px) {
   .sidebar {
+    position: fixed;
+    left: 0;
+    top: var(--header-height);
+    height: calc(100dvh - var(--header-height));
     width: 286px;
+    z-index: var(--z-mobile-sidebar);
+  }
+
+  .sidebar-open {
+    transform: translateX(0);
   }
 
   .sidebar-closed {
     transform: translateX(-104%);
+  }
+
+  .sidebar-overlay {
+    display: block;
+    position: fixed;
+    top: var(--header-height);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(15, 23, 42, 0.42);
+    z-index: var(--z-sidebar-backdrop);
+    animation: fadeIn 0.2s ease-out;
+    backdrop-filter: blur(2px);
   }
 }
 

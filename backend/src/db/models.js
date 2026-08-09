@@ -241,6 +241,12 @@ const saleSchema = new mongoose.Schema({
     taxAmount:          { type: Number, default: 0 },
     discountAmount:     { type: Number, default: 0 },
     lineTotal:          { type: Number, required: true, min: 0 },
+    // ─ Loss Management: immutable financial snapshot at time of sale ─
+    costBasis:              { type: Number, default: 0, min: 0 },
+    costBasisSource:        { type: String, enum: ['product_purchase_price', 'buyback_cost_basis', null], default: null },
+    effectiveSellingAmount: { type: Number, default: 0 },
+    grossResult:            { type: Number, default: 0 },
+    isLoss:                 { type: Boolean, default: false },
   }],
   payments: [{
     paymentMethod: {
@@ -357,6 +363,9 @@ const buybackSchema = new mongoose.Schema({
   serviceReadyStatus: { type: String },
   marketValue: { type: Number, required: true, min: 0 },
   negotiatedPrice: { type: Number, required: true, min: 0 },
+  // ─ Loss Management: buyback resale cost basis (negotiatedPrice + repair/other capitalized cost) ─
+  repairCost: { type: Number, default: 0, min: 0 },
+  otherCapitalizedCost: { type: Number, default: 0, min: 0 },
   status: { type: String, default: 'pending', enum: ['pending', 'accepted', 'processed', 'rejected'] },
   inventoryProduct: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
   inventoryStatus: { type: String, enum: ['ready', 'under_repair'], default: 'ready' },
@@ -369,6 +378,53 @@ const buybackSchema = new mongoose.Schema({
 
 // Index jobNo on buybacks and enforce uniqueness (sparse to allow existing nulls)
 buybackSchema.index({ jobNo: 1 }, { unique: true, sparse: true });
+
+// ─── Loss Management ─────────────────────────────────────────────────────────
+const lossRecordSchema = new mongoose.Schema({
+  sale:       { type: mongoose.Schema.Types.ObjectId, ref: 'Sale', required: true, index: true },
+  saleItemId: { type: mongoose.Schema.Types.ObjectId, required: true, unique: true },
+  saleNo:     { type: String, required: true },
+  store:      { type: mongoose.Schema.Types.ObjectId, ref: 'Store', required: true, index: true },
+  employee:   { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true, index: true },
+  customer:   { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
+  product:    { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true, index: true },
+  buyback:    { type: mongoose.Schema.Types.ObjectId, ref: 'Buyback' },
+  productType:{ type: String, required: true, enum: ['new_phone', 'used_phone', 'accessory', 'service', 'repair_part'] },
+  productName:{ type: String, required: true },
+  brand:      String,
+  imei:       String,
+  sku:        String,
+  quantity:   { type: Number, required: true, min: 1 },
+
+  costBasis:              { type: Number, required: true, min: 0 },
+  originalSellingPrice:   { type: Number, required: true, min: 0 },
+  discountAmount:         { type: Number, default: 0, min: 0 },
+  exchangeCredit:         { type: Number, default: 0, min: 0 },
+  otherAdjustment:        { type: Number, default: 0 },
+  effectiveSellingAmount: { type: Number, required: true },
+
+  lossAmount:     { type: Number, required: true, min: 0 },
+  lossPercentage: { type: Number, required: true, min: 0 },
+
+  lossType: {
+    type: String,
+    required: true,
+    enum: ['DISCOUNT_BELOW_COST', 'BUYBACK_RESALE_LOSS', 'CLEARANCE_SALE', 'PRICE_ADJUSTMENT', 'DAMAGED_STOCK', 'OTHER'],
+  },
+  lossReason: String,
+
+  lossStatus:     { type: String, default: 'active', enum: ['active', 'reversed'], index: true },
+  reversedAt:     Date,
+  reversedBy:     { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  reversalReason: String,
+
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+}, { timestamps: true });
+lossRecordSchema.index({ store: 1, createdAt: -1 });
+lossRecordSchema.index({ employee: 1, createdAt: -1 });
+lossRecordSchema.index({ product: 1, createdAt: -1 });
+lossRecordSchema.index({ lossType: 1, createdAt: -1 });
+lossRecordSchema.index({ lossStatus: 1, createdAt: -1 });
 
 const expenseSchema = new mongoose.Schema({
   store: { type: mongoose.Schema.Types.ObjectId, ref: 'Store' },
@@ -539,6 +595,7 @@ export const StockLedger = mongoose.model('StockLedger', stockLedgerSchema);
 export const StockMovement = StockLedger;
 export const Sale = mongoose.model('Sale', saleSchema);
 export const Buyback = mongoose.model('Buyback', buybackSchema);
+export const LossRecord = mongoose.model('LossRecord', lossRecordSchema);
 export const Expense = mongoose.model('Expense', expenseSchema);
 export const PaymentEntry = mongoose.model('PaymentEntry', paymentEntrySchema);
 export const ChangeRequest = mongoose.model('ChangeRequest', changeRequestSchema);

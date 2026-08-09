@@ -3,10 +3,14 @@ import { User } from '../types';
 import {
   createProduct,
   deleteProduct,
+  getProductHistory,
+  getProductStockByStore,
   listStoreInventory,
   listProductTransferHistory,
   transferInventoryStock,
   updateProduct,
+  type ApiProductHistoryEntry,
+  type ApiProductStoreStock,
   type ApiStore,
   type ApiStoreInventoryRow,
   type ApiProductTransferHistory,
@@ -21,6 +25,8 @@ interface InventoryProps {
 
 type SortKey = 'name' | 'price' | 'value' | 'updated';
 type SortDir = 'asc' | 'desc';
+/** Product master fields an Admin can edit inline — each requires a remark. */
+type EditableField = 'purchase_price' | 'selling_price' | 'inventory_status';
 
 type ProductForm = Omit<CreateProductPayload, 'stock_quantity'>;
 
@@ -115,6 +121,14 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
   const [brandFilter, setBrandFilter] = useState('all');
   const [detailRow, setDetailRow] = useState<ApiStoreInventoryRow | null>(null);
   const [transferHistory, setTransferHistory] = useState<ApiProductTransferHistory[]>([]);
+  const [productHistory, setProductHistory] = useState<ApiProductHistoryEntry[]>([]);
+  const [storeStock, setStoreStock] = useState<{ rows: ApiProductStoreStock[]; total_stock: number } | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [pendingEdit, setPendingEdit] = useState<{ row: ApiStoreInventoryRow; field: EditableField; label: string; oldValue: string; newValue: string } | null>(null);
+  const [remarkText, setRemarkText] = useState('');
+  const [transferQuantity, setTransferQuantity] = useState(1);
+  const [transferReason, setTransferReason] = useState('');
+  const [transferNotes, setTransferNotes] = useState('');
   const modelRef = useRef<HTMLInputElement>(null);
 
   const isAdmin = user.role === 'Admin';
@@ -211,6 +225,8 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
     sku: source.sku || makeSku(source),
     name: source.name || productName(source),
     price: source.price || source.purchase_price || '0',
+    // Every device is a distinct unit identified by its own IMEI/job number,
+    // so each entry always represents exactly one product.
     stock_quantity: 1,
     min_stock_level: 0,
     primary_store_ref: selectedStoreId,
@@ -238,45 +254,121 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
     }
   };
 
-  const inlineSave = async (row: ApiStoreInventoryRow, field: 'price' | 'inventory_status', value: string) => {
-    if (!isAdmin) return;
+  // Price/status changes are meaningful business edits — the backend requires
+  // a remark for them (audit trail), so instead of saving on blur/change we
+  // open a small confirm-with-remark step first. A no-op edit (value
+  // unchanged) skips the prompt entirely.
+  const requestInlineChange = (row: ApiStoreInventoryRow, field: EditableField, value: string) => {
+    if (!isAdmin) {
+      setError('You do not have permission to edit product details. Only an administrator can change product master data.');
+      return;
+    }
+    const currentValue = field === 'purchase_price'
+      ? String(row.purchase_price ?? '')
+      : field === 'selling_price'
+        ? String(row.selling_price || row.unit_price || '')
+        : (row.inventory_status || 'ready');
+
+    const isMoney = field !== 'inventory_status';
+    // Compare numerically for prices so "100" vs "100.00" isn't a false change.
+    const unchanged = isMoney
+      ? Number(currentValue || 0) === Number(value || 0)
+      : String(currentValue) === String(value);
+    if (unchanged) return;
+
+    setError('');
+    setRemarkText('');
+    setPendingEdit({
+      row,
+      field,
+      label: field === 'purchase_price' ? 'Purchase Price' : field === 'selling_price' ? 'Selling Price' : 'Status',
+      oldValue: isMoney ? `Rs ${toMoney(currentValue)}` : String(currentValue).replace(/_/g, ' '),
+      newValue: isMoney ? `Rs ${toMoney(value)}` : String(value).replace(/_/g, ' '),
+    });
+  };
+
+  const confirmPendingEdit = async () => {
+    if (!pendingEdit) return;
+    if (!remarkText.trim()) { setError('A remark is required to save this change.'); return; }
+    const { row, field } = pendingEdit;
     const payload: Partial<CreateProductPayload> = {
       primary_store_ref: selectedStoreId,
       sku: row.sku,
       name: row.name,
+      remark: remarkText.trim(),
     };
-    if (field === 'price') {
-      payload.purchase_price = value;
+    const rawValue = pendingEdit.newValue.replace(/[^0-9.]/g, '');
+    if (field === 'purchase_price') {
+      payload.purchase_price = rawValue;
+    } else if (field === 'selling_price') {
+      payload.price = rawValue;
     } else if (field === 'inventory_status') {
-      payload.inventory_status = value as CreateProductPayload['inventory_status'];
+      payload.inventory_status = pendingEdit.newValue.replace(/ /g, '_') as CreateProductPayload['inventory_status'];
     }
 
     try {
+      setError('');
       await updateProduct(row.product_id, payload);
-      setStatusMessage('Saved inline change.');
+      setStatusMessage('Change saved and recorded in the audit history.');
+      setPendingEdit(null);
+      setRemarkText('');
       await loadInventory(selectedStoreId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save inline change');
+      setError(err instanceof Error ? err.message : 'Failed to save change');
+    }
+  };
+
+  // Re-pulls just the audit trail for the open product (the "Refresh" action).
+  const openHistory = async () => {
+    if (!detailRow) return;
+    setHistoryLoading(true);
+    try {
+      setProductHistory(await getProductHistory(detailRow.product_id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load change history');
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
   const openTransfer = (row: ApiStoreInventoryRow) => {
     setTransferRow(row);
     setTransferStoreId('');
+    setTransferQuantity(1);
+    setTransferReason('Stock replenishment');
+    setTransferNotes('');
   };
 
+  // One entry point for the product popup: stock, transfer history and the
+  // audit/change history are all fetched together, so "Details" and "History"
+  // are a single action rather than two buttons opening the same modal.
   const openDetails = async (row: ApiStoreInventoryRow) => {
     setDetailRow(row);
     setTransferHistory([]);
+    setProductHistory([]);
+    setStoreStock(null);
+    setHistoryLoading(true);
     try {
-      setTransferHistory(await listProductTransferHistory(row.product_id));
+      const [transfers, stock, changes] = await Promise.all([
+        listProductTransferHistory(row.product_id),
+        getProductStockByStore(row.product_id),
+        getProductHistory(row.product_id),
+      ]);
+      setTransferHistory(transfers);
+      setStoreStock(stock);
+      setProductHistory(changes);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load transfer history');
+      setError(err instanceof Error ? err.message : 'Failed to load product details');
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
   const submitTransfer = async () => {
     if (!transferRow || !transferStoreId) return;
+    if (transferQuantity <= 0) { setError('Transfer quantity must be greater than zero.'); return; }
+    if (transferQuantity > transferRow.quantity) { setError(`Only ${transferRow.quantity} units are available.`); return; }
+    if (!transferReason.trim()) { setError('A reason is required for the transfer.'); return; }
     setSaving(true);
     setError('');
     setStatusMessage('');
@@ -285,8 +377,9 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
         from_store_id: transferRow.store_id,
         to_store_id: transferStoreId,
         product_id: transferRow.product_id,
-        quantity: 1,
-        reason: `Transfer ${transferRow.job_id || transferRow.product_code || transferRow.sku}`,
+        quantity: transferQuantity,
+        reason: transferReason.trim(),
+        notes: transferNotes.trim() || undefined,
       });
       setStatusMessage('Product transferred. POS visibility updated.');
       setTransferRow(null);
@@ -318,20 +411,20 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
   return (
     <div className="inventory-page">
       <section className="inventory-entry-shell">
-        <div className="inventory-entry-head">
+        <div className="module-header inventory-entry-head">
           <div>
             <h1>Inventory</h1>
-            <p>Fast stock entry for daily mobile shop work.</p>
+            <p>Manage stock levels, pricing, transfers and product audit history.</p>
           </div>
-          <label className="inventory-store-picker">
+        </div>
+
+        <form className="inventory-fast-form" onSubmit={(event) => { event.preventDefault(); void saveProduct(true); }}>
+          <label>
             <span>Store</span>
             <select value={selectedStoreId} onChange={(event) => setSelectedStoreId(event.target.value)} disabled={isManager}>
               {visibleStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
             </select>
           </label>
-        </div>
-
-        <form className="inventory-fast-form" onSubmit={(event) => { event.preventDefault(); void saveProduct(true); }}>
           <label>
             <span>Job Number</span>
             <input value={form.job_id || ''} onChange={(event) => updateForm({ job_id: event.target.value.toUpperCase() })} placeholder="JOB-00001" required />
@@ -387,12 +480,14 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
             </select>
           </label>
           <label>
-            <span>Status</span>
+            <span>Availability</span>
             <select value={form.inventory_status || 'ready'} onChange={(event) => updateForm({ inventory_status: event.target.value as ProductForm['inventory_status'] })}>
-              <option value="ready">Ready</option>
+              <option value="ready">Ready for Sale</option>
+              <option value="under_repair">Under Repair</option>
             </select>
           </label>
           <div className="inventory-form-actions">
+            <span className="inventory-form-context">Adding to <strong>{visibleStores.find((s) => s.id === selectedStoreId)?.name || 'selected store'}</strong></span>
             <button type="button" className="btn btn-secondary" onClick={resetForNext}>Clear</button>
             <button type="button" className="btn btn-secondary" disabled={saving} onClick={() => void saveProduct(false)}>{saving ? 'Saving...' : 'Save'}</button>
             <button className="btn btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Save & Add Next'}</button>
@@ -409,7 +504,16 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
         <div><span>Available in POS</span><strong>{summary.availableStock}</strong></div>
         <div><span>4G Records</span><strong>{summary.stock4g}</strong></div>
         <div><span>5G Records</span><strong>{summary.stock5g}</strong></div>
-        <div><span>History Records</span><strong>{summary.soldRecords}</strong></div>
+        <button
+          type="button"
+          className={`inventory-kpi-action${statusFilter === 'sold' ? ' active' : ''}`}
+          title="Show only sold / historical records"
+          onClick={() => setStatusFilter(statusFilter === 'sold' ? 'all' : 'sold')}
+        >
+          <span>History Records</span>
+          <strong>{summary.soldRecords}</strong>
+          <em>{statusFilter === 'sold' ? 'Showing — click to clear' : 'Click to view'}</em>
+        </button>
       </section>
 
       <section className="inventory-table-panel">
@@ -457,18 +561,22 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
                   <td><strong>{row.model || '-'}</strong></td>
                   <td><strong>{row.imei || '-'}</strong></td>
                   <td><strong>{row.store_name || visibleStores.find((store) => store.id === row.store_id)?.name || '-'}</strong></td>
-                  <td><input className="inline-input money" defaultValue={row.purchase_price || row.final_price || row.unit_price} onBlur={(event) => void inlineSave(row, 'price', event.target.value)} disabled={!isAdmin} /></td>
-                  <td><strong>Rs {toMoney(Number(row.selling_price || row.unit_price))}</strong></td>
+                  <td>{isAdmin
+                    ? <input key={`pp-${row.product_id}-${row.purchase_price}`} className="inline-input money" type="number" min="0" defaultValue={row.purchase_price ?? ''} onBlur={(event) => requestInlineChange(row, 'purchase_price', event.target.value)} title="Admin only — a remark is required to save" />
+                    : <strong>Rs {toMoney(row.purchase_price)}</strong>}</td>
+                  <td>{isAdmin
+                    ? <input key={`sp-${row.product_id}-${row.selling_price || row.unit_price}`} className="inline-input money" type="number" min="0" defaultValue={row.selling_price || row.unit_price || ''} onBlur={(event) => requestInlineChange(row, 'selling_price', event.target.value)} title="Admin only — a remark is required to save" />
+                    : <strong>Rs {toMoney(Number(row.selling_price || row.unit_price))}</strong>}</td>
                   <td><span className={row.category === 'used_phone' ? 'inventory-type used' : 'inventory-type new'}>{row.category === 'used_phone' ? 'USED PHONE' : 'NEW'}</span></td>
                   <td>
                     {isAdmin ? (
-                      <select className="inline-input" value={row.inventory_status || 'ready'} onChange={(event) => void inlineSave(row, 'inventory_status', event.target.value)}>
+                      <select className="inline-input" value={row.inventory_status || 'ready'} onChange={(event) => requestInlineChange(row, 'inventory_status', event.target.value)}>
                         <option value="ready">Ready for Sale</option>
                         <option value="under_repair">Under Repair</option>
                         <option value="sold">Sold</option>
                       </select>
                     ) : (
-                      <span className={`inventory-status ${row.inventory_status || 'ready'}`}>{row.inventory_status || 'ready'}</span>
+                      <span className={`inventory-status ${row.inventory_status || 'ready'}`} title={row.inventory_status === 'under_repair' ? 'In buyback inventory but not currently sellable' : undefined}>{row.inventory_status === 'under_repair' ? '🔴 Under Repair' : row.inventory_status === 'ready' ? '🟢 Ready for Sale' : (row.inventory_status || 'ready')}</span>
                     )}
                   </td>
                   <td>
@@ -480,7 +588,15 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
                   </td>
                 </tr>
               ))}
-              {!loading && pagedRows.length === 0 && <tr><td colSpan={10} className="inventory-empty">No inventory found.</td></tr>}
+              {!loading && pagedRows.length === 0 && <tr><td colSpan={10} className="inventory-empty">
+                <strong>No products found</strong>
+                <span>Nothing matches {[
+                  debouncedSearch && `"${debouncedSearch}"`,
+                  brandFilter !== 'all' && brandFilter,
+                  statusFilter !== 'all' && statusFilter.replace(/_/g, ' '),
+                  visibleStores.find((s) => s.id === selectedStoreId)?.name,
+                ].filter(Boolean).join(' · ') || 'the current filters'}. Try changing the search, brand or status filter.</span>
+              </td></tr>}
               {loading && <tr><td colSpan={10} className="inventory-empty">Loading inventory...</td></tr>}
             </tbody>
           </table>
@@ -495,24 +611,123 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
         </div>
       </section>
       {transferRow && (
-        <div className="inventory-transfer-panel">
-          <strong>Transfer {transferRow.job_id || transferRow.product_code || transferRow.name}</strong>
-          <select className="form-input" value={transferStoreId} onChange={(event) => setTransferStoreId(event.target.value)}>
-            <option value="">Destination store</option>
-            {activeStores.filter((store) => store.id !== transferRow.store_id).map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
-          </select>
-          <button className="btn btn-primary btn-sm" disabled={!transferStoreId || saving} onClick={() => void submitTransfer()}>{saving ? 'Transferring...' : 'Confirm Transfer'}</button>
-          <button className="btn btn-secondary btn-sm" onClick={() => setTransferRow(null)}>Cancel</button>
+        <div className="inventory-detail-backdrop" onClick={() => setTransferRow(null)}>
+          <div className="inventory-transfer-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="inventory-modal-head">
+              <div><h2>Transfer Inventory</h2><p>Move stock between stores. Both stores keep a full movement history.</p></div>
+              <button type="button" onClick={() => setTransferRow(null)} aria-label="Close">x</button>
+            </div>
+
+            <div className="inventory-transfer-grid">
+              <label><span>From Store</span><input value={transferRow.store_name || '-'} disabled /></label>
+              <label><span>To Store</span>
+                <select value={transferStoreId} onChange={(event) => setTransferStoreId(event.target.value)}>
+                  <option value="">Select destination</option>
+                  {activeStores.filter((store) => store.id !== transferRow.store_id).map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+                </select>
+              </label>
+              <label className="inventory-form-wide"><span>Product</span><input value={`${transferRow.name}${transferRow.job_id ? ` · ${transferRow.job_id}` : ''}`} disabled /></label>
+              <label><span>Available</span><input value={transferRow.quantity} disabled /></label>
+              <label><span>Transfer Quantity</span>
+                <input type="number" min={1} max={transferRow.quantity} value={transferQuantity}
+                  onChange={(event) => setTransferQuantity(Math.max(1, Number(event.target.value || 1)))} />
+              </label>
+              <label className="inventory-form-wide"><span>Reason</span>
+                <input value={transferReason} onChange={(event) => setTransferReason(event.target.value)} placeholder="e.g. Stock replenishment" />
+              </label>
+              <label className="inventory-form-wide"><span>Notes (optional)</span>
+                <input value={transferNotes} onChange={(event) => setTransferNotes(event.target.value)} placeholder="Anything worth recording against this movement" />
+              </label>
+            </div>
+
+            {transferQuantity > transferRow.quantity && <p className="inventory-state inventory-state-error">Only {transferRow.quantity} unit{transferRow.quantity === 1 ? '' : 's'} are available.</p>}
+            {error && <p className="inventory-state inventory-state-error">{error}</p>}
+
+            <div className="inventory-modal-actions">
+              <button className="btn btn-secondary" onClick={() => { setTransferRow(null); setError(''); }}>Cancel</button>
+              <button className="btn btn-primary" disabled={!transferStoreId || saving || transferQuantity > transferRow.quantity} onClick={() => void submitTransfer()}>{saving ? 'Transferring...' : 'Create Transfer'}</button>
+            </div>
+          </div>
         </div>
       )}
       {detailRow && (
         <div className="inventory-detail-backdrop">
           <div className="inventory-detail-modal">
             <div className="inventory-modal-head"><div><h2>{detailRow.job_id}</h2><p>{detailRow.brand} {detailRow.model}</p></div><button onClick={() => setDetailRow(null)}>x</button></div>
-            <div className="inventory-detail-grid"><div><span>IMEI</span><strong>{detailRow.imei || '-'}</strong></div><div><span>Store</span><strong>{detailRow.store_name}</strong></div><div><span>Product Type</span><strong>{detailRow.category === 'used_phone' ? 'Used Phone (Buyback)' : 'New Phone'}</strong></div><div><span>Status</span><strong>{detailRow.inventory_status || 'ready'}</strong></div><div><span>Selling Price</span><strong>Rs {toMoney(detailRow.selling_price || detailRow.unit_price)}</strong></div></div>
+
+            <h3>Product Overview</h3>
+            <div className="inventory-detail-grid">
+              <div><span>Product</span><strong>{detailRow.name}</strong></div>
+              <div><span>Brand / Model</span><strong>{detailRow.brand} {detailRow.model}</strong></div>
+              <div><span>SKU</span><strong>{detailRow.sku || '-'}</strong></div>
+              <div><span>IMEI</span><strong>{detailRow.imei || '-'}</strong></div>
+              <div><span>Product Type</span><strong>{detailRow.category === 'used_phone' ? 'Used Phone (Buyback)' : 'New Phone'}</strong></div>
+              <div><span>Status</span><strong className={detailRow.inventory_status === 'under_repair' ? 'text-loss' : detailRow.inventory_status === 'ready' ? 'text-profit' : ''}>{detailRow.inventory_status === 'under_repair' ? '🔴 Under Repair' : detailRow.inventory_status === 'ready' ? '🟢 Ready for Sale' : (detailRow.inventory_status || 'ready')}</strong></div>
+            </div>
+
+            <h3>Pricing</h3>
+            <div className="inventory-detail-grid">
+              <div><span>Purchase Price</span><strong>Rs {toMoney(detailRow.purchase_price)}</strong></div>
+              <div><span>Selling Price</span><strong>Rs {toMoney(detailRow.selling_price || detailRow.unit_price)}</strong></div>
+              <div><span>Final Price</span><strong>Rs {toMoney(detailRow.final_price || detailRow.unit_price)}</strong></div>
+            </div>
+
+            <h3>Store Stock{storeStock && <span className="inventory-total-stock">Total: {storeStock.total_stock}</span>}</h3>
+            <div className="inventory-detail-grid">
+              {!storeStock && <div><span>Loading</span><strong>Loading store stock...</strong></div>}
+              {storeStock?.rows.map((row) => (
+                <div key={row.store_id}>
+                  <span>{row.store_name} &middot; {row.store_code}</span>
+                  <strong className={row.quantity <= 0 ? 'text-muted' : row.stock_status === 'low_stock' ? 'text-warn' : ''}>
+                    {row.quantity} available
+                  </strong>
+                </div>
+              ))}
+            </div>
+
+            <h3>Stock Status</h3>
+            <div className="inventory-detail-grid">
+              <div><span>Current Stock ({detailRow.store_name})</span><strong>{detailRow.quantity}</strong></div>
+              <div><span>Minimum Level</span><strong>{detailRow.min_stock_level}</strong></div>
+              <div><span>Stock Status</span><strong>{detailRow.stock_status?.replace(/_/g, ' ') || '-'}</strong></div>
+              <div><span>Last Updated</span><strong>{new Date(detailRow.updated_at).toLocaleString()}</strong></div>
+            </div>
+
             <h3>Transfer History</h3>
             <div className="inventory-history">{transferHistory.map((entry) => <div key={entry.id}><strong>{entry.from_store_name} to {entry.to_store_name}</strong><span>{new Date(entry.transferred_at).toLocaleString()} | {entry.transferred_by || 'System'} | {entry.remarks}</span></div>)}{transferHistory.length === 0 && <p>No transfer history.</p>}</div>
+
+            <h3>Change History<button type="button" className="inventory-history-toggle" onClick={() => void openHistory()} disabled={historyLoading}>{historyLoading ? 'Loading...' : 'Refresh'}</button></h3>
+            <div className="inventory-history">
+              {historyLoading && <p>Loading change history...</p>}
+              {!historyLoading && productHistory.length === 0 && <p>No recorded price or status changes for this product yet.</p>}
+              {!historyLoading && productHistory.map((entry) => (
+                <div key={entry.id} className="inventory-history-entry">
+                  <strong>{entry.changed_by} &middot; {new Date(entry.changed_at).toLocaleString()}</strong>
+                  {entry.changes.map((change) => <span key={change.field}>{change.field}: {String(change.old_value)} &rarr; {String(change.new_value)}</span>)}
+                  {entry.remark && <em>"{entry.remark}"</em>}
+                </div>
+              ))}
+            </div>
+
             <div className="inventory-modal-actions"><button className="btn btn-secondary" onClick={() => setDetailRow(null)}>Close</button>{(isAdmin || isManager) && detailRow.quantity > 0 && detailRow.inventory_status !== 'sold' && <button className="btn btn-primary" onClick={() => { setDetailRow(null); openTransfer(detailRow); }}>Transfer</button>}</div>
+          </div>
+        </div>
+      )}
+
+      {pendingEdit && (
+        <div className="inventory-detail-backdrop">
+          <div className="inventory-edit-confirm">
+            <h2>Confirm Change</h2>
+            <div className="inventory-edit-confirm-row"><span>{pendingEdit.label}</span><strong>{pendingEdit.oldValue} &rarr; {pendingEdit.newValue}</strong></div>
+            <label className="inventory-edit-remark-label">
+              <span>Remark (required)</span>
+              <textarea value={remarkText} onChange={(event) => setRemarkText(event.target.value)} placeholder="Why is this changing? e.g. Market price adjustment" rows={3} autoFocus />
+            </label>
+            {error && <p className="inventory-state inventory-state-error">{error}</p>}
+            <div className="inventory-modal-actions">
+              <button className="btn btn-secondary" onClick={() => { setPendingEdit(null); setError(''); }}>Cancel</button>
+              <button className="btn btn-primary" onClick={() => void confirmPendingEdit()}>Save Changes</button>
+            </div>
           </div>
         </div>
       )}

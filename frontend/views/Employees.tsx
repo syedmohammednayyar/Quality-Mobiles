@@ -5,6 +5,7 @@ import {
   listEmployeeAccessStores,
   listEmployees,
   updateEmployee,
+  updateStore,
   type ApiEmployee,
   type ApiStore,
 } from '../services/api';
@@ -14,6 +15,8 @@ import './Employees.css';
 interface EmployeesProps {
   user: User;
   stores?: ApiStore[];
+  /** Refreshes the app-wide store list so a rename appears everywhere at once. */
+  onStoresUpdate?: () => void | Promise<void>;
 }
 
 type UserForm = {
@@ -38,8 +41,10 @@ const emptyForm: UserForm = {
   active: true,
 };
 
-const Employees: React.FC<EmployeesProps> = ({ user, stores = [] }) => {
+const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate }) => {
   const isAdmin = user.role === 'Admin';
+  const [storeNameDrafts, setStoreNameDrafts] = useState<Record<string, string>>({});
+  const [savingStoreId, setSavingStoreId] = useState<string | null>(null);
   const [employees, setEmployees] = useState<ApiEmployee[]>([]);
   const [managedStoreIds, setManagedStoreIds] = useState<string[]>([]);
   const [search, setSearch] = useState('');
@@ -80,6 +85,34 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [] }) => {
     () => stores.filter((store) => store.is_active && (isAdmin || managedStoreIds.includes(store.id))),
     [stores, isAdmin, managedStoreIds],
   );
+
+  // ── Store master (Admin only) ────────────────────────────────────────────
+  // Renaming only changes the display name. The store's permanent ID/code is
+  // never touched, so every existing sale, buyback, employee and inventory
+  // record stays linked and simply shows the new name.
+  const storeDraft = (store: ApiStore) => storeNameDrafts[store.id] ?? store.name;
+
+  const saveStoreName = async (store: ApiStore) => {
+    const nextName = storeDraft(store).trim();
+    if (!nextName) { setError('Store name cannot be empty.'); return; }
+    if (nextName === store.name) return;
+    try {
+      setSavingStoreId(store.id);
+      setError('');
+      setMessage('');
+      await updateStore(store.id, { name: nextName });
+      // Refresh both the app-wide store list (header switcher, filters) and
+      // the user rows, whose "Assigned Store" column carries its own copy of
+      // the name — otherwise the table shows the old name until a reload.
+      await Promise.all([onStoresUpdate?.(), loadUsers()]);
+      setStoreNameDrafts((prev) => { const next = { ...prev }; delete next[store.id]; return next; });
+      setMessage(`Store renamed to "${nextName}". Its ID and all linked records are unchanged.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to rename store');
+    } finally {
+      setSavingStoreId(null);
+    }
+  };
 
   const filteredUsers = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -174,10 +207,10 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [] }) => {
 
   return (
     <div className="users-page">
-      <header className="users-header">
+      <header className="module-header users-header">
         <div>
           <h1>User Management</h1>
-          <p>{employees.length} users</p>
+          <p>Manage staff accounts, roles and store assignments &middot; {employees.length} users</p>
         </div>
         <button className="btn btn-primary" type="button" onClick={openCreate}>
           <span className="material-icons">person_add</span> Add User
@@ -207,6 +240,53 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [] }) => {
 
       {error && !modal && <p className="users-notice error">{error}</p>}
       {message && <p className="users-notice success">{message}</p>}
+
+      {isAdmin && (
+        <section className="store-manager">
+          <div className="store-manager-head">
+            <div>
+              <h2>Store Management</h2>
+              <p>Rename a store for the whole system. The store ID stays permanent, so sales, buybacks, inventory and staff records remain linked.</p>
+            </div>
+          </div>
+          <div className="store-manager-grid">
+            {stores.filter((store) => store.is_active).map((store) => {
+              const draft = storeDraft(store);
+              const dirty = draft.trim() !== store.name;
+              return (
+                <div className="store-card" key={store.id}>
+                  <div className="store-card-head">
+                    <span className="store-card-code">{store.code}</span>
+                    <span className="store-card-type">{store.store_type === 'main' ? 'Main Branch' : 'Secondary Branch'}</span>
+                  </div>
+                  <label>
+                    <span>Store Name</span>
+                    <input
+                      value={draft}
+                      onChange={(event) => setStoreNameDrafts((prev) => ({ ...prev, [store.id]: event.target.value }))}
+                      onKeyDown={(event) => { if (event.key === 'Enter') void saveStoreName(store); }}
+                      placeholder="Store name"
+                    />
+                  </label>
+                  <div className="store-card-actions">
+                    {dirty && (
+                      <button type="button" className="btn btn-sm btn-secondary"
+                        onClick={() => setStoreNameDrafts((prev) => { const next = { ...prev }; delete next[store.id]; return next; })}>
+                        Reset
+                      </button>
+                    )}
+                    <button type="button" className="btn btn-sm btn-primary" disabled={!dirty || savingStoreId === store.id}
+                      onClick={() => void saveStoreName(store)}>
+                      {savingStoreId === store.id ? 'Saving...' : 'Save Changes'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {stores.filter((store) => store.is_active).length === 0 && <p className="users-empty">No active stores found.</p>}
+          </div>
+        </section>
+      )}
 
       <section className="users-table-wrap">
         <table className="users-table">

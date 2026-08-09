@@ -4,6 +4,7 @@ import { HttpError } from "../../utils/httpError.js";
 import { assertStoreAccess, isAdmin } from "../../utils/storeAccess.js";
 import {
   adjustInventory,
+  getProductStockByStore,
   listActiveStores,
   listLowStock,
   listStoreInventory,
@@ -43,6 +44,7 @@ const transferBodySchema = z.object({
   product_id: objectIdSchema,
   quantity: z.coerce.number().int().positive(),
   reason: z.string().min(3).max(500),
+  notes: z.string().max(1000).optional(),
 });
 
 function handleZod(error, next) {
@@ -170,10 +172,23 @@ export async function transferStockHandler(req, res, next) {
       productId: body.product_id,
       quantity: body.quantity,
       reason: body.reason,
+      notes: body.notes,
       userId: req.auth.userId,
     });
 
     res.status(201).json(result);
+  } catch (error) {
+    if (handleZod(error, next)) return;
+    next(error);
+  }
+}
+
+export async function getProductStockByStoreHandler(req, res, next) {
+  try {
+    if (!req.auth) throw new HttpError(401, "Authentication required", "AUTH_REQUIRED");
+    const params = z.object({ productId: objectIdSchema }).parse(req.params);
+    const result = await getProductStockByStore(params.productId);
+    res.status(200).json(result);
   } catch (error) {
     if (handleZod(error, next)) return;
     next(error);

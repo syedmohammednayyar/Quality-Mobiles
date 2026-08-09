@@ -43,6 +43,7 @@ export async function updateStoreHandler(req, res, next) {
       parent: payload.parent,
       isActive: payload.is_active,
       actorRoles: req.auth.roles,
+      userId: req.auth.userId,
     });
 
     res.status(200).json(row);

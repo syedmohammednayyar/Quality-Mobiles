@@ -354,3 +354,53 @@
 }
 .qm-toast-success { background: linear-gradient(90deg,var(--primary-teal),#1fb3b0); }
 .qm-toast-error { background: linear-gradient(90deg,var(--error-red),#d9474f); }
+
+/* ── Dark mode ─────────────────────────────────────────────────────────────
+   The login screen predates the theme-token system and paints its own
+   palette, so instead of retokenising the whole brand layout we repoint only
+   the surfaces, text and inputs when `.dark` is active. The branded left
+   panel (deep-blue gradient + gold shield) is intentionally left alone —
+   it already reads correctly against a dark background. */
+.dark .auth-shell {
+  background:
+    radial-gradient(circle at 14% 18%, rgba(28, 94, 214, 0.22), transparent 32%),
+    radial-gradient(circle at 86% 84%, rgba(11, 42, 91, 0.28), transparent 34%),
+    linear-gradient(135deg, #0b1220 0%, #0f172a 100%);
+}
+
+.dark .auth-layout {
+  background: var(--bg-primary);
+  border-color: var(--border-color);
+  box-shadow: 0 30px 55px -28px rgba(0, 0, 0, 0.65);
+}
+
+.dark .auth-form-panel {
+  background: linear-gradient(180deg, var(--bg-primary), var(--bg-secondary));
+}
+
+.dark .auth-form-head h2 { color: var(--text-primary); }
+.dark .auth-form-head p,
+.dark .auth-label { color: var(--text-secondary); }
+
+.dark .auth-input {
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
+  color: var(--text-primary);
+}
+
+.dark .auth-input::placeholder { color: var(--text-tertiary); }
+
+.dark .auth-input:focus {
+  background: var(--bg-primary);
+  border-color: var(--color-primary-400);
+}
+
+.dark .auth-input-icon { color: var(--text-secondary); }
+
+.dark .toggle-btn {
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
+  color: var(--text-primary);
+}
+
+.dark .toggle-btn.active { color: var(--text-inverse); }

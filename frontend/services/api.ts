@@ -151,6 +151,13 @@ export interface CreateProductPayload {
   remarks?: string;
   device_notes?: string;
   active?: boolean;
+  // Reason for a price/status/identity change — required by the backend only
+  // when one of those meaningful fields actually changes (see updateProduct).
+  remark?: string;
+  // Stock-entry metadata, recorded against the StockLedger movement.
+  entry_type?: "new_stock" | "return" | "correction" | "adjustment" | "damage" | "lost";
+  reference?: string;
+  entry_remark?: string;
 }
 
 export interface ApiSaleItem {
@@ -648,9 +655,13 @@ export interface ReportDataResponse {
 }
 
 export interface AdminOverviewFilters {
-  quickRange?: "today" | "yesterday" | "this_week" | "this_month" | "last_month" | "custom";
+  quickRange?: "today" | "yesterday" | "this_week" | "this_month" | "last_month" | "this_year" | "last_year" | "month_year" | "custom" | "all";
   fromDate?: string;
   toDate?: string;
+  /** 1-12, or "all" for a whole year — only used when quickRange is "month_year". */
+  month?: string;
+  /** 4-digit year — only used when quickRange is "month_year". */
+  year?: string;
   storeIds?: string[];
 }
 
@@ -870,11 +881,95 @@ export interface DashboardSummary {
   kpis: Record<string, number>;
   salesOverview: Record<"today" | "week" | "month", { sales: number; revenue: number; productsSold: number }>;
   inventory: { newPhones: number; usedPhones: number; lowStock: number; recentlyAdded: number; recentlyTransferred: number };
-  storePerformance: Array<{ store: string; revenue: number; sales: number; inventoryValue: number }>;
-  trend: Array<{ date: string; revenue: number; sales: number }>;
+  storePerformance: Array<{ store: string; revenue: number; sales: number; inventoryValue: number; lossAmount?: number }>;
   recentSales: Array<{ id: string; jobNumber: string; product: string; customer: string; store: string; amount: number; time: string }>;
   activity: Array<{ activity: string; detail: string; user: string; time: string }>;
   alerts: Array<{ type: string; count: number; action: string }>;
+  // ── Loss Management ──────────────────────────────────────────────────────
+  lossOverview?: Record<"today" | "week" | "month", { totalLoss: number; itemCount: number; transactionCount: number; averageLoss: number }>;
+  lossByStore?: Array<{ storeId: string; storeName: string; lossAmount: number }>;
+  recentLosses?: Array<{ id: string; saleNo: string; product: string; imei: string; store: string; employee: string; costBasis: number; soldAmount: number; lossAmount: number; reason: string; time: string }>;
+}
+
+// ─── Loss Management ────────────────────────────────────────────────────────
+
+export type LossType = "DISCOUNT_BELOW_COST" | "BUYBACK_RESALE_LOSS" | "CLEARANCE_SALE" | "PRICE_ADJUSTMENT" | "DAMAGED_STOCK" | "OTHER";
+export type LossStatus = "active" | "reversed";
+
+export interface ApiLoss {
+  id: string;
+  sale_id: string;
+  sale_no: string;
+  store_id: string;
+  store_name: string;
+  employee_id: string;
+  employee_name: string;
+  customer_id: string | null;
+  customer_name: string;
+  product_id: string;
+  product_name: string;
+  brand: string;
+  imei: string;
+  sku: string;
+  product_type: string;
+  quantity: number;
+  cost_basis: string;
+  original_selling_price: string;
+  discount_amount: string;
+  exchange_credit: string;
+  effective_selling_amount: string;
+  loss_amount: string;
+  loss_percentage: string;
+  loss_type: LossType;
+  loss_reason: string;
+  loss_status: LossStatus;
+  reversed_at: string | null;
+  reversal_reason: string;
+  created_at: string;
+  buyback?: { id: string; brand: string; model: string; negotiated_price: string; repair_cost: string };
+}
+
+export interface ApiLossSummary {
+  totalLoss: number;
+  totalProfit: number;
+  netGrossResult: number;
+  lossTransactionCount: number;
+  lossItemCount: number;
+  averageLoss: number;
+  lossValueRate: number;
+  lossTransactionRate: number;
+}
+
+export interface LossFilters {
+  fromDate?: string;
+  toDate?: string;
+  storeIds?: string[];
+  employeeId?: string;
+  productId?: string;
+  brand?: string;
+  productType?: string;
+  lossType?: LossType;
+  lossStatus?: LossStatus;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+function lossFiltersToQuery(filters: LossFilters = {}): URLSearchParams {
+  const query = new URLSearchParams();
+  if (filters.fromDate) query.set("fromDate", filters.fromDate);
+  if (filters.toDate) query.set("toDate", filters.toDate);
+  if (filters.storeIds?.length) query.set("storeIds", filters.storeIds.join(","));
+  if (filters.employeeId) query.set("employeeId", filters.employeeId);
+  if (filters.productId) query.set("productId", filters.productId);
+  if (filters.brand) query.set("brand", filters.brand);
+  if (filters.productType) query.set("productType", filters.productType);
+  if (filters.lossType) query.set("lossType", filters.lossType);
+  if (filters.lossStatus) query.set("lossStatus", filters.lossStatus);
+  if (filters.search) query.set("search", filters.search);
+  if (filters.limit) query.set("limit", String(filters.limit));
+  if (filters.offset) query.set("offset", String(filters.offset));
+  return query;
 }
 
 function getDeviceId(): string {
@@ -1494,6 +1589,9 @@ export async function createProduct(_payload: CreateProductPayload): Promise<Api
       remarks: _payload.remarks,
       device_notes: _payload.device_notes,
       active: _payload.active ?? true,
+      entry_type: _payload.entry_type,
+      reference: _payload.reference,
+      entry_remark: _payload.entry_remark,
     }),
   });
 
@@ -1536,6 +1634,7 @@ export async function updateProduct(_id: string, _payload: Partial<CreateProduct
     ...(_payload.remarks !== undefined ? { remarks: _payload.remarks } : {}),
     ...(_payload.device_notes !== undefined ? { device_notes: _payload.device_notes } : {}),
     ...(_payload.active !== undefined ? { active: _payload.active } : {}),
+    ...(_payload.remark !== undefined ? { remark: _payload.remark } : {}),
   };
 
   const row = await apiRequest<ApiProduct>(`/products/${_id}`, {
@@ -1548,6 +1647,25 @@ export async function updateProduct(_id: string, _payload: Partial<CreateProduct
 
 export async function deleteProduct(_id: string): Promise<void> {
   await apiRequest<void>(`/products/${_id}`, { method: "DELETE" });
+}
+
+export interface ApiProductHistoryChange {
+  field: string;
+  old_value: unknown;
+  new_value: unknown;
+}
+
+export interface ApiProductHistoryEntry {
+  id: string;
+  changed_by: string;
+  changed_at: string;
+  remark: string;
+  changes: ApiProductHistoryChange[];
+}
+
+export async function getProductHistory(productId: string): Promise<ApiProductHistoryEntry[]> {
+  const res = await apiRequest<{ rows: ApiProductHistoryEntry[] }>(`/products/${productId}/history`);
+  return res.rows;
 }
 
 export async function createInventoryChangeRequest(storeId: string, productId: string, oldValue: number, newValue: number, reason?: string) {
@@ -1564,12 +1682,26 @@ export async function createInventoryChangeRequest(storeId: string, productId: s
   });
 }
 
+export interface ApiProductStoreStock {
+  store_id: string;
+  store_code: string;
+  store_name: string;
+  quantity: number;
+  min_stock_level: number;
+  stock_status: "in_stock" | "low_stock" | "out_of_stock";
+}
+
+export async function getProductStockByStore(productId: string): Promise<{ rows: ApiProductStoreStock[]; total_stock: number }> {
+  return apiRequest<{ rows: ApiProductStoreStock[]; total_stock: number }>(`/inventory/products/${productId}/stock`);
+}
+
 export async function transferInventoryStock(payload: {
   from_store_id: string;
   to_store_id: string;
   product_id: string;
   quantity: number;
   reason: string;
+  notes?: string;
 }): Promise<{ id: string }> {
   return apiRequest<{ id: string }>("/inventory/transfers", {
     method: "POST",
@@ -1683,6 +1815,83 @@ export async function updateSale(id: string, payload: Partial<CreateSalePayload>
 
 export async function deleteSale(id: string): Promise<void> {
   await apiRequest<void>(`/sales/${id}`, { method: "DELETE" });
+}
+
+// ─── Sale detail ("View") ───────────────────────────────────────────────────
+
+export interface ApiSaleDetailItem {
+  id: string;
+  product_id: string;
+  product_name: string;
+  brand: string;
+  model: string;
+  imei: string;
+  job_id: string;
+  sku: string;
+  category: string;
+  quantity: number;
+  original_unit_price: string;
+  adjusted_unit_price: string;
+  price_was_adjusted: boolean;
+  adjustment_reason: string;
+  adjustment_category: string;
+  line_original_total: string;
+  line_adjusted_total: string;
+  tax_amount: string;
+  line_total: string;
+  cost_basis: string;
+  cost_basis_source: string | null;
+  effective_selling_amount: string;
+  gross_result: string;
+  is_loss: boolean;
+}
+
+export interface ApiSaleDetailPayment {
+  id: string;
+  method: string;
+  status: string;
+  amount: string;
+  reference_no: string;
+  notes: string;
+  paid_at: string;
+}
+
+export interface ApiSaleDetail {
+  id: string;
+  sale_no: string;
+  status: string;
+  store_id: string;
+  store_name: string;
+  customer_id: string | null;
+  customer_name: string;
+  customer_phone: string;
+  employee_id: string;
+  employee_name: string;
+  attended_by_name: string;
+  referred_by_name: string;
+  referral_notes: string;
+  original_amount: string;
+  adjusted_amount: string;
+  price_adjustment_total: string;
+  subtotal: string;
+  tax_total: string;
+  discount_total: string;
+  exchange_total: string;
+  grand_total: string;
+  amount_paid: string;
+  payment_status: string;
+  job_number: string;
+  ic_number: string;
+  gift: string;
+  note: string;
+  created_at: string;
+  items: ApiSaleDetailItem[];
+  payments: ApiSaleDetailPayment[];
+}
+
+export async function getSaleDetail(id: string): Promise<ApiSaleDetail> {
+  const res = await apiRequest<{ success: boolean; data: ApiSaleDetail }>(`/sales/${id}/detail`);
+  return res.data;
 }
 
 function normalizeBuybackRow(row: ApiBuyback): ApiBuyback {
@@ -2342,6 +2551,8 @@ export async function getAdminReportOverview(params: AdminOverviewFilters): Prom
   if (params.quickRange) query.set("quickRange", params.quickRange);
   if (params.fromDate) query.set("fromDate", params.fromDate);
   if (params.toDate) query.set("toDate", params.toDate);
+  if (params.month) query.set("month", params.month);
+  if (params.year) query.set("year", params.year);
   if (params.storeIds?.length) query.set("storeIds", params.storeIds.join(","));
   const res = await apiRequest<{ success: boolean; data: AdminOverviewResponse }>(`/reports/admin/overview?${query.toString()}`);
   return res.data;
@@ -2349,4 +2560,60 @@ export async function getAdminReportOverview(params: AdminOverviewFilters): Prom
 
 export async function getDashboardSummary(): Promise<DashboardSummary> {
   return apiRequest<DashboardSummary>("/dashboard/summary");
+}
+
+// ─── Loss Management ────────────────────────────────────────────────────────
+
+export async function listLosses(filters: LossFilters = {}): Promise<{ rows: ApiLoss[]; total: number; limit: number; offset: number }> {
+  const res = await apiRequest<{ success: boolean; data: { rows: ApiLoss[]; total: number; limit: number; offset: number } }>(`/losses?${lossFiltersToQuery(filters).toString()}`);
+  return res.data;
+}
+
+export async function getLoss(id: string): Promise<ApiLoss> {
+  const res = await apiRequest<{ success: boolean; data: ApiLoss }>(`/losses/${id}`);
+  return res.data;
+}
+
+export async function getLossSummary(filters: LossFilters = {}): Promise<ApiLossSummary> {
+  const res = await apiRequest<{ success: boolean; data: ApiLossSummary }>(`/losses/summary?${lossFiltersToQuery(filters).toString()}`);
+  return res.data;
+}
+
+export async function getLossByStore(filters: LossFilters = {}): Promise<Array<{ storeId: string; storeName: string; lossAmount: number; count: number }>> {
+  const res = await apiRequest<{ success: boolean; data: Array<{ storeId: string; storeName: string; lossAmount: number; count: number }> }>(`/losses/by-store?${lossFiltersToQuery(filters).toString()}`);
+  return res.data;
+}
+
+export async function getLossByEmployee(filters: LossFilters = {}): Promise<Array<{ employeeId: string; employeeName: string; lossAmount: number; count: number }>> {
+  const res = await apiRequest<{ success: boolean; data: Array<{ employeeId: string; employeeName: string; lossAmount: number; count: number }> }>(`/losses/by-employee?${lossFiltersToQuery(filters).toString()}`);
+  return res.data;
+}
+
+export async function getLossByProduct(filters: LossFilters = {}): Promise<Array<{ productId: string; productName: string; brand: string; lossAmount: number; lossTransactions: number }>> {
+  const res = await apiRequest<{ success: boolean; data: Array<{ productId: string; productName: string; brand: string; lossAmount: number; lossTransactions: number }> }>(`/losses/by-product?${lossFiltersToQuery(filters).toString()}`);
+  return res.data;
+}
+
+export async function getLossByReason(filters: LossFilters = {}): Promise<Array<{ reason: string; lossAmount: number; count: number }>> {
+  const res = await apiRequest<{ success: boolean; data: Array<{ reason: string; lossAmount: number; count: number }> }>(`/losses/by-reason?${lossFiltersToQuery(filters).toString()}`);
+  return res.data;
+}
+
+export async function getLossTrend(filters: LossFilters = {}): Promise<Array<{ date: string; lossAmount: number; count: number }>> {
+  const res = await apiRequest<{ success: boolean; data: Array<{ date: string; lossAmount: number; count: number }> }>(`/losses/trend?${lossFiltersToQuery(filters).toString()}`);
+  return res.data;
+}
+
+export async function exportLosses(filters: LossFilters = {}): Promise<Blob> {
+  const token = getAuthToken();
+  const headers = new Headers();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const url = `${API_BASE}/losses/export?${lossFiltersToQuery(filters).toString()}`;
+  const resp = await fetch(url, { headers });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new ApiError(resp.status, text || `Export failed (${resp.status})`);
+  }
+  return resp.blob();
 }

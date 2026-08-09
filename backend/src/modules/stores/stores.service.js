@@ -1,6 +1,7 @@
-import { Store } from "../../db/models.js";
+import { Product, Store } from "../../db/models.js";
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
+import { writeAudit } from "../../utils/audit.js";
 
 const FIXED_STORES = [
   { code: "STORE1", name: "Store 1" },
@@ -57,6 +58,8 @@ export async function updateStore(storeId, input) {
       throw new HttpError(400, "Only fixed store set is supported", "STORE_INVALID_SET");
     }
     const isAdmin = Array.isArray(input.actorRoles) && input.actorRoles.includes("admin");
+
+    const previousName = store.name;
 
     if (input.name !== undefined) {
       const name = input.name.trim();
@@ -117,6 +120,30 @@ export async function updateStore(storeId, input) {
 
     try {
       await store.save({ session });
+
+      // The store's _id never changes, so every Sale / Buyback / Inventory /
+      // Employee reference stays intact and automatically shows the new name.
+      // Product carries a denormalised `storeName` copy though, so refresh it
+      // here or that copy silently drifts out of date.
+      const renamed = input.name !== undefined && store.name !== previousName;
+      if (renamed) {
+        await Product.updateMany(
+          { store: store._id },
+          { $set: { storeName: store.name } },
+          { session },
+        );
+        await writeAudit({
+          action: "store_renamed",
+          entityType: "store",
+          entityId: store._id,
+          ctx: { userId: input.userId, storeId: store._id },
+          fieldName: "name",
+          oldValue: previousName,
+          newValue: store.name,
+          metadata: { storeCode: store.code },
+        });
+      }
+
       return mapStore(store);
     } catch (error) {
       if (error.code === 11000) {

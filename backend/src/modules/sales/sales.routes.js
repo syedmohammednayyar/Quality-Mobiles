@@ -6,6 +6,7 @@ import {
   createSaleHandler,
   deleteSaleHandler,
   getSaleByIdHandler,
+  getSaleDetailHandler,
   listSalesHandler,
   lookupSaleJobHandler,
   updateSaleHandler,
@@ -39,6 +40,12 @@ salesRouter.get(
   "/:saleId",
   authorize("admin", "manager", "cashier", "inventory_manager"),
   getSaleByIdHandler,
+);
+
+salesRouter.get(
+  "/:saleId/detail",
+  authorize("admin", "manager", "cashier", "inventory_manager"),
+  getSaleDetailHandler,
 );
 
 salesRouter.patch(

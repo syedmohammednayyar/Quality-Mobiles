@@ -11,12 +11,17 @@ import POS from './views/POS';
 import Buyback from './views/Buyback';
 import Employees from './views/Employees';
 import Reports from './views/Reports';
+import LossManagement from './views/LossManagement';
 import { ApiStore, clearAuthToken, clearSessionUser, getAuthToken, getCurrentUser, getSessionUser, listStores, logout as apiLogout, logoutAllDevices, refreshSession, setSessionUser } from './services/api';
+import './App.css';
 
 const STORE_KEY = 'quality-mobiles-current-store';
 
 const App: React.FC = () => {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  // Desktop: sidebar starts visible (open). Mobile/tablet: sidebar starts as a
+  // closed off-canvas drawer. Same boolean, same toggle button — the CSS
+  // (App.css/Sidebar.css) decides *how* "open"/"closed" looks per breakpoint.
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth > 1024);
   const [user, setUser] = useState<User | null>(() => getSessionUser() as User | null);
   const [currentStore, setCurrentStore] = useState<ApiStore | { id: string, name: string }>(() => {
     try {
@@ -158,35 +163,27 @@ const App: React.FC = () => {
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       ) : (
-        <div style={{ display: 'flex', height: '100vh', flexDirection: 'column' }}>
-          <Header 
-            onMenuClick={() => setIsSidebarOpen(!isSidebarOpen)} 
+        <div className={`app-shell${isSidebarOpen ? '' : ' sidebar-collapsed'}`}>
+          <Sidebar
+            isOpen={isSidebarOpen}
+            setIsOpen={setIsSidebarOpen}
             user={user}
-            currentStore={currentStore}
-            stores={stores}
-            onStoreChange={handleStoreChange}
             onLogout={handleLogout}
-            onLogoutAll={handleLogoutAll}
           />
-          
-          <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-            <Sidebar 
-              isOpen={isSidebarOpen} 
-              setIsOpen={setIsSidebarOpen} 
+
+          <div className="app-area">
+            <Header
+              onMenuClick={() => setIsSidebarOpen(!isSidebarOpen)}
               user={user}
+              currentStore={currentStore}
+              stores={stores}
+              onStoreChange={handleStoreChange}
               onLogout={handleLogout}
+              onLogoutAll={handleLogoutAll}
             />
-            
-            <main
-              style={{
-                flex: 1,
-                overflow: 'auto',
-                background:
-                  'radial-gradient(circle at 0% 0%, rgba(139, 192, 224, 0.32), transparent 34%), radial-gradient(circle at 100% 0%, rgba(94, 231, 223, 0.26), transparent 30%), var(--bg-secondary)',
-                padding: '24px',
-              }}
-            >
-              <div style={{ maxWidth: '1600px', margin: '0 auto' }}>
+
+            <main className="main-content">
+              <div className="main-content-inner">
                 <Routes>
                   <Route path="/dashboard" element={adminOrManager ? <Dashboard user={user} /> : <Navigate to={defaultPath} replace />} />
                   <Route path="/sales" element={adminOrManager || isEmployee ? <Sales user={user} /> : <Navigate to={defaultPath} replace />} />
@@ -196,6 +193,7 @@ const App: React.FC = () => {
                   <Route path="/accessories" element={<Navigate to={defaultPath} replace />} />
                   <Route path="/financial" element={<Navigate to="/reports" replace />} />
                   <Route path="/reports" element={adminOrManager ? <Reports user={user} /> : <Navigate to={defaultPath} replace />} />
+                  <Route path="/losses" element={adminOrManager ? <LossManagement user={user} /> : <Navigate to={defaultPath} replace />} />
                   <Route path="/customers" element={<Navigate to={defaultPath} replace />} />
                   <Route path="/employees" element={adminOrManager ? <Employees user={user} stores={stores} onStoresUpdate={refreshStores} /> : <Navigate to={defaultPath} replace />} />
                   <Route path="/" element={<Navigate to={defaultPath} replace />} />

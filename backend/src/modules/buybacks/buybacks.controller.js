@@ -36,6 +36,11 @@ const extraFields = {
   inspection_notes: z.string().max(2000).optional(),
   pricing_notes: z.string().max(2000).optional(),
   resale_notes: z.string().max(2000).optional(),
+  // Availability of the physical device: "ready" = sellable in POS,
+  // "under_repair" = held in inventory, shown in POS but not sellable.
+  inventory_status: z.enum(["ready", "under_repair"]).optional(),
+  repair_cost: z.coerce.number().min(0).optional(),
+  other_capitalized_cost: z.coerce.number().min(0).optional(),
 };
 
 const createBuybackSchema = z.object({
@@ -150,6 +155,9 @@ export async function createBuybackHandler(req, res, next) {
         status: payload.status,
         ...payload,
         cashAmount: payload.cash_payout_amount,
+        inventoryStatus: payload.inventory_status,
+        repairCost: payload.repair_cost,
+        otherCapitalizedCost: payload.other_capitalized_cost,
       },
       req.auth.userId,
     );
@@ -213,6 +221,9 @@ export async function updateBuybackHandler(req, res, next) {
         status: payload.status,
         ...payload,
         cashAmount: payload.cash_payout_amount,
+        inventoryStatus: payload.inventory_status,
+        repairCost: payload.repair_cost,
+        otherCapitalizedCost: payload.other_capitalized_cost,
       },
       req.auth.userId,
     );

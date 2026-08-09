@@ -4,6 +4,7 @@ import { authorize } from "../../middleware/authorize.js";
 import { applyStoreFilter, resolveStoreContext } from "../../middleware/storeScope.js";
 import {
   adjustInventoryHandler,
+  getProductStockByStoreHandler,
   listLowStockHandler,
   listInventoryByQueryHandler,
   listInventoryHandler,
@@ -34,6 +35,12 @@ inventoryRouter.get(
   "/products/:productId/transfers",
   authorize("admin", "manager", "employee"),
   listProductTransferHistoryHandler,
+);
+
+inventoryRouter.get(
+  "/products/:productId/stock",
+  authorize("admin", "manager", "employee"),
+  getProductStockByStoreHandler,
 );
 
 inventoryRouter.get(

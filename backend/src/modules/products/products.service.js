@@ -1,8 +1,25 @@
 import mongoose from "mongoose";
-import { BulkInventory, Product, Sale, SequenceCounter, SerializedInventory, StockLedger, Store, StoreInventory } from "../../db/models.js";
+import { AuditLog, BulkInventory, Product, Sale, SerializedInventory, StockLedger, Store, StoreInventory } from "../../db/models.js";
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
 import { toObjectId } from "../../utils/ids.js";
+import { writeAudit } from "../../utils/audit.js";
+import { nextSequence } from "../../utils/sequence.js";
+
+// Fields whose change is significant enough to require a remark and an audit entry.
+const AUDITED_FIELDS = ["unitPrice", "purchasePrice", "discount", "taxRate", "inventoryStatus", "isActive", "name", "brand", "model", "category"];
+const AUDITED_FIELD_LABELS = {
+  unitPrice: "Selling Price",
+  purchasePrice: "Purchase Price",
+  discount: "Discount",
+  taxRate: "Tax Rate",
+  inventoryStatus: "Status",
+  isActive: "Active",
+  name: "Product Name",
+  brand: "Brand",
+  model: "Model",
+  category: "Category",
+};
 
 function toMoney(value) {
   const parsed = Number(value || 0);
@@ -34,15 +51,6 @@ function resolveInventoryMode(input) {
   const category = apiCategoryToDb(input.category);
   if (["new_phone", "used_phone"].includes(category)) return "serialized";
   return "bulk";
-}
-
-async function nextSequence(key, prefix, width = 5) {
-  const counter = await SequenceCounter.findOneAndUpdate(
-    { key },
-    { $inc: { value: 1 } },
-    { upsert: true, returnDocument: "after" },
-  );
-  return `${prefix}${String(counter.value).padStart(width, "0")}`;
 }
 
 async function buildProductIdentity(input) {
@@ -356,6 +364,12 @@ export async function createProduct(input) {
 
       const openingQuantity = inventoryMode === "serialized" ? serializedEntries.length : stockQuantity;
       if (openingQuantity > 0) {
+        // Capture why the stock arrived so the ledger reads as a real stock
+        // entry (New Stock / Return / Correction ...) rather than an opaque
+        // "Initial stock" row.
+        const entryType = cleanText(input.entryType) || "new_stock";
+        const reference = cleanText(input.reference);
+        const entryRemark = cleanText(input.entryRemark);
         await StockLedger.create([{
           store: storeObjectId,
           product: product._id,
@@ -363,7 +377,8 @@ export async function createProduct(input) {
           quantity: openingQuantity,
           referenceType: "product_create",
           referenceId: product._id,
-          note: "Initial stock",
+          reason: entryType,
+          note: [reference && `Ref: ${reference}`, entryRemark].filter(Boolean).join(" — ") || "Initial stock",
           createdBy: input.userId,
         }], { session });
       }
@@ -387,6 +402,11 @@ export async function updateProduct(productId, input) {
       serialNumber: input.serialNumber !== undefined ? input.serialNumber : product.serialNumber,
     };
     await ensureIdentityUnique(identityPayload, product._id);
+
+    // Snapshot pre-change values for the audited fields so we can diff after
+    // applying the update — this is the "before" half of the audit trail.
+    const beforeSnapshot = {};
+    AUDITED_FIELDS.forEach((field) => { beforeSnapshot[field] = product[field]; });
 
     if (input.sku !== undefined) product.sku = String(input.sku).trim().toLowerCase();
     if (input.jobId !== undefined) product.jobId = cleanText(input.jobId);
@@ -423,7 +443,36 @@ export async function updateProduct(productId, input) {
       product.storeName = targetStoreDoc.name;
     }
 
+    // Diff against the pre-change snapshot — only these fields require a
+    // remark and get an audit entry; free-text fields (notes, images, etc.)
+    // don't force one.
+    const changedFields = AUDITED_FIELDS.filter((field) => String(beforeSnapshot[field] ?? "") !== String(product[field] ?? ""));
+    const remark = cleanText(input.remark);
+    if (changedFields.length > 0 && !remark) {
+      throw new HttpError(400, "A remark is required when changing price, status, or other key product details", "PRODUCT_REMARK_REQUIRED");
+    }
+
     await product.save({ session });
+
+    if (changedFields.length > 0) {
+      const oldValues = {};
+      const newValues = {};
+      changedFields.forEach((field) => {
+        const label = AUDITED_FIELD_LABELS[field] || field;
+        oldValues[label] = beforeSnapshot[field] ?? null;
+        newValues[label] = product[field] ?? null;
+      });
+      await writeAudit({
+        action: "product_updated",
+        entityType: "product",
+        entityId: product._id,
+        ctx: { userId: input.userId, storeId: product.store },
+        oldValues,
+        newValues,
+        notes: remark,
+        metadata: { productName: product.name, sku: product.sku },
+      });
+    }
 
     const hasInventoryUpdate = input.stockQuantity !== undefined
       || input.primaryStoreRef !== undefined
@@ -480,4 +529,28 @@ export async function deleteProduct(productId) {
     product.isActive = false;
     await product.save({ session });
   });
+}
+
+// ─── getProductHistory ─────────────────────────────────────────────────────
+// Field-level change history for the "View Change History" UI — one row per
+// edit transaction, each carrying every field that changed in that edit.
+
+export async function getProductHistory(productId) {
+  const logs = await AuditLog.find({ entityType: "product", entityId: toObjectId(productId, "PRODUCT_INVALID_ID") })
+    .populate("user", "username fullName")
+    .sort({ createdAt: -1 })
+    .limit(100)
+    .lean();
+
+  return logs.map((log) => ({
+    id: String(log._id),
+    changed_by: log.user?.fullName || log.user?.username || "System",
+    changed_at: log.createdAt,
+    remark: log.notes || "",
+    changes: Object.keys(log.newValues || {}).map((field) => ({
+      field,
+      old_value: log.oldValues?.[field] ?? null,
+      new_value: log.newValues?.[field] ?? null,
+    })),
+  }));
 }

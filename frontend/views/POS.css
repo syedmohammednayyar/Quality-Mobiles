@@ -72,6 +72,11 @@
   background: color-mix(in srgb, var(--color-success-50) 65%, var(--bg-primary));
 }
 
+.pos-alert.warning {
+  color: var(--color-warning-600);
+  background: color-mix(in srgb, var(--color-warning-50) 65%, var(--bg-primary));
+}
+
 .pos-workspace {
   flex: 1;
   min-height: 0;
@@ -200,13 +205,17 @@
   background: color-mix(in srgb, var(--color-primary-50) 55%, var(--bg-primary));
 }
 
-.pos-product-blocked {
-  background: rgba(220, 38, 38, 0.08);
-  color: var(--color-danger-700);
+/* Scoped to match the specificity of `.pos-product-table tbody tr:hover`
+   (0-2-2) — otherwise that generic hover rule outranks the blocked styling
+   and an Under Repair row loses its red tint as soon as it's hovered. */
+.pos-product-table tbody tr.pos-product-blocked {
+  background: var(--status-error-bg);
+  color: var(--status-error-text);
+  cursor: not-allowed;
 }
 
-.pos-product-blocked:hover {
-  background: rgba(220, 38, 38, 0.14);
+.pos-product-table tbody tr.pos-product-blocked:hover {
+  background: color-mix(in srgb, var(--status-error-bg) 82%, var(--color-error-500));
 }
 
 .pos-empty {
@@ -215,8 +224,8 @@
   color: var(--text-secondary);
   font-weight: 700;
 }
-.pos-status{display:inline-flex;padding:4px 8px;border-radius:999px;font-size:9px;font-weight:900;letter-spacing:0.04em;text-transform:uppercase}.pos-status.ready{background:var(--color-success-50);color:var(--color-success-700)}.pos-status.blocked{background:rgba(220,38,38,.12);color:var(--color-danger-700)}
-.pos-type{display:inline-flex;padding:4px 6px;border-radius:5px;font-size:9px;font-weight:900}.pos-type.new{background:var(--color-success-50);color:var(--color-success-600)}.pos-type.used{background:var(--color-warning-100);color:var(--color-warning-700)}
+.pos-status{display:inline-flex;padding:4px 8px;border-radius:999px;font-size:9px;font-weight:900;letter-spacing:0.04em;text-transform:uppercase}.pos-status.ready{background:var(--status-success-bg);color:var(--status-success-text)}.pos-status.blocked{background:var(--status-error-bg);color:var(--status-error-text)}
+.pos-type{display:inline-flex;padding:4px 6px;border-radius:5px;font-size:9px;font-weight:900}.pos-type.new{background:var(--status-success-bg);color:var(--status-success-text)}.pos-type.used{background:var(--status-warning-bg);color:var(--status-warning-text)}
 
 .pos-cart-list {
   flex: 1;
@@ -264,7 +273,7 @@
 .pos-cart-original-price {
   display: block;
   margin-top: 3px !important;
-  color: var(--color-warning-700) !important;
+  color: var(--status-warning-text) !important;
   font-size: 10px !important;
   font-weight: 800 !important;
 }
@@ -272,6 +281,24 @@
 .pos-cart-original-price em {
   color: var(--color-error-600);
   font-style: normal;
+}
+
+.pos-cost-indicator {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.pos-cost-indicator.loss strong {
+  color: var(--color-error-600);
+  font-weight: 800;
+}
+
+.pos-cost-indicator.profit strong {
+  color: var(--color-success-600);
+  font-weight: 800;
 }
 
 /* Adjustment panel — spans full 3-column grid row */
@@ -374,7 +401,7 @@
   border-right: 0;
 }
 
-.pos-total-adjustment strong { color: var(--color-warning-700) !important; font-size: 13px !important; }
+.pos-total-adjustment strong { color: var(--status-warning-text) !important; font-size: 13px !important; }
 .pos-total-exchange strong   { color: var(--color-primary-600)  !important; font-size: 13px !important; }
 
 .pos-cart-totals span,
