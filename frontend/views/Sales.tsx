@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { User } from '../types';
 import { getSaleDetail, listSales, listStores, type ApiSale, type ApiSaleDetail, type ApiStore } from '../services/api';
+import DateField from '../components/DateField';
+import { formatDateTime } from '../utils/dateFormat';
 import './Sales.css';
 
 const money = (value: number | string) => `Rs ${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -118,8 +120,8 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
         <select value={employeeFilter} onChange={(event) => setEmployeeFilter(event.target.value)}><option value="all">All Employees</option>{employees.map((employee) => <option key={employee} value={employee}>{employee}</option>)}</select>
         <select value={paymentFilter} onChange={(event) => setPaymentFilter(event.target.value)}><option value="all">All Payments</option>{paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}</select>
         <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All Statuses</option><option value="paid">Paid</option><option value="partial">Partial</option><option value="pending">Pending</option></select>
-        <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} title="From date" />
-        <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} title="To date" />
+        <DateField value={fromDate} onChange={setFromDate} title="From date" />
+        <DateField value={toDate} onChange={setToDate} title="To date" />
       </section>
 
       {error && <p className="sales-state sales-state-error">{error}</p>}
@@ -144,7 +146,7 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                   <span className="sales-list-price">Final: Rs {Number(sale.total_amount || item.line_total || item.unit_price || 0).toLocaleString()}</span>
                 </td>
                 <td>{sale.payment_method || '-'}</td>
-                <td>{new Date(sale.sold_at).toLocaleString()}</td>
+                <td>{formatDateTime(sale.sold_at)}</td>
                 <td><span className={`sales-status ${sale.payment_status || 'pending'}`}>{sale.payment_status || sale.sale_status || 'completed'}</span></td>
                 <td><button type="button" className="sales-view-btn" onClick={() => setViewSaleId(sale.id)}>View</button></td>
               </tr>
@@ -171,7 +173,7 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
 
             {viewDetail && !viewLoading && (
               <div className="sales-drawer-body">
-                <p className="sales-drawer-id">{viewDetail.sale_no} &middot; {new Date(viewDetail.created_at).toLocaleString()}</p>
+                <p className="sales-drawer-id">{viewDetail.sale_no} &middot; {formatDateTime(viewDetail.created_at)}</p>
 
                 <dl>
                   <dt>Store</dt><dd>{viewDetail.store_name}</dd>

@@ -10,6 +10,7 @@ import {
   type ApiStore,
 } from '../services/api';
 import { User } from '../types';
+import { formatDate, formatDateTime } from '../utils/dateFormat';
 import './Employees.css';
 
 interface EmployeesProps {
@@ -300,7 +301,7 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate
                 <td><span className={`user-role-badge ${employee.role.toLowerCase()}`}>{employee.role}</span></td>
                 <td>{employee.store || 'Unassigned'}</td>
                 <td><span className={`user-status ${employee.active === false ? 'inactive' : 'active'}`}>{employee.active === false ? 'Inactive' : 'Active'}</span></td>
-                <td>{employee.last_login ? new Date(employee.last_login).toLocaleString() : '-'}</td>
+                <td>{formatDateTime(employee.last_login)}</td>
                 <td><div className="user-actions">
                   <button title="View user" onClick={() => { setSelected(employee); setModal('view'); }}><span className="material-icons">visibility</span></button>
                   <button title="Edit user" onClick={() => openEdit(employee)}><span className="material-icons">edit</span></button>
@@ -334,7 +335,7 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate
         </div>
       )}
 
-      {modal === 'view' && selected && <div className="users-modal-backdrop"><div className="users-modal users-detail"><div className="users-modal-head"><div><h2>{selected.name}</h2><p>User profile and activity summary</p></div><button onClick={() => setModal(null)}><span className="material-icons">close</span></button></div><dl><div><dt>Email</dt><dd>{selected.email || '-'}</dd></div><div><dt>Phone</dt><dd>{selected.phone || '-'}</dd></div><div><dt>Role</dt><dd>{selected.role}</dd></div><div><dt>Store</dt><dd>{selected.store || '-'}</dd></div><div><dt>Status</dt><dd>{selected.active === false ? 'Inactive' : 'Active'}</dd></div><div><dt>Join Date</dt><dd>{selected.join_date ? new Date(selected.join_date).toLocaleDateString() : '-'}</dd></div><div><dt>Last Login</dt><dd>{selected.last_login ? new Date(selected.last_login).toLocaleString() : '-'}</dd></div><div><dt>Sales / Activity</dt><dd>{selected.sales_count}</dd></div></dl></div></div>}
+      {modal === 'view' && selected && <div className="users-modal-backdrop"><div className="users-modal users-detail"><div className="users-modal-head"><div><h2>{selected.name}</h2><p>User profile and activity summary</p></div><button onClick={() => setModal(null)}><span className="material-icons">close</span></button></div><dl><div><dt>Email</dt><dd>{selected.email || '-'}</dd></div><div><dt>Phone</dt><dd>{selected.phone || '-'}</dd></div><div><dt>Role</dt><dd>{selected.role}</dd></div><div><dt>Store</dt><dd>{selected.store || '-'}</dd></div><div><dt>Status</dt><dd>{selected.active === false ? 'Inactive' : 'Active'}</dd></div><div><dt>Join Date</dt><dd>{formatDate(selected.join_date)}</dd></div><div><dt>Last Login</dt><dd>{formatDateTime(selected.last_login)}</dd></div><div><dt>Sales / Activity</dt><dd>{selected.sales_count}</dd></div></dl></div></div>}
 
       {modal === 'delete' && selected && <div className="users-modal-backdrop"><div className="users-modal users-delete"><div className="users-modal-head"><div><h2>Delete User</h2><p>This permanently removes access for {selected.name}.</p></div></div>{error && <p className="users-notice error">{error}</p>}<div className="users-modal-actions"><button className="btn btn-secondary" onClick={() => setModal(null)}>Cancel</button><button className="btn btn-danger" disabled={saving} onClick={() => void confirmDelete()}>{saving ? 'Deleting...' : 'Delete User'}</button></div></div></div>}
     </div>

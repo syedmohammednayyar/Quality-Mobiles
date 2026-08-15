@@ -9,6 +9,7 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "test": "node --test \"src/**/*.test.js\"",
+    "test:dates": "node src/scripts/testDateFormatTimezones.js",
     "audit:database": "node src/scripts/databaseAudit.js",
     "validate:production": "node src/scripts/productionValidation.js"
   },

@@ -1,3 +1,5 @@
+import { formatDate, toInputDate, todayInputDate } from "../utils/dateFormat";
+
 export interface ApiCustomer {
   id: string;
   name: string;
@@ -893,7 +895,8 @@ export interface DashboardSummary {
   kpis: Record<string, number>;
   salesOverview: Record<"period" | "today" | "week" | "month", { sales: number; revenue: number; productsSold: number }>;
   inventory: { newPhones: number; usedPhones: number; lowStock: number; recentlyAdded: number; recentlyTransferred: number };
-  salesTrend: Array<{ date: string; label: string; sales: number; revenue: number; grossRevenue: number }>;
+  /** `label` is the compact axis tick (15/Aug); `fullLabel` is the full DD/Mon/YYYY. */
+  salesTrend: Array<{ date: string; label: string; fullLabel: string; sales: number; revenue: number; grossRevenue: number }>;
   topProducts: Array<{ productId: string; name: string; brand: string; category: string; quantity: number; revenue: number }>;
   revenueBreakdown: Array<{ key: string; label: string; amount: number; percent: number }>;
   inventoryAlerts: Array<{ id: string; product: string; sku: string; brand: string; store: string; quantity: number; minStockLevel: number; severity: "low_stock" | "out_of_stock" }>;
@@ -2208,7 +2211,9 @@ export async function listOutstandingBalances(): Promise<ApiOutstandingBalance[]
 
 function resolveDateRange(period: ReportPeriod, from?: string, to?: string): { start: string; end: string } {
   const now = new Date();
-  const today = now.toISOString().slice(0, 10);
+  // Local calendar day. `toISOString().slice(0, 10)` would hand back yesterday
+  // for anyone east of Greenwich in the small hours.
+  const today = toInputDate(now);
 
   if (period === "custom") {
     if (!from || !to) throw new ApiError(400, "Custom range requires from and to dates.", "VALIDATION_ERROR");
@@ -2222,10 +2227,10 @@ function resolveDateRange(period: ReportPeriod, from?: string, to?: string): { s
   if (period === "weekly") {
     const start = new Date(now);
     start.setDate(now.getDate() - 6);
-    return { start: start.toISOString().slice(0, 10), end: today };
+    return { start: toInputDate(start), end: today };
   }
 
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+  const monthStart = toInputDate(new Date(now.getFullYear(), now.getMonth(), 1));
   return { start: monthStart, end: today };
 }
 
@@ -2242,7 +2247,7 @@ function monthEndIso(month: string): string {
     throw new ApiError(400, "Invalid month format. Expected YYYY-MM", "VALIDATION_ERROR");
   }
   const end = new Date(year, monthIndex, 0);
-  return end.toISOString().slice(0, 10);
+  return toInputDate(end);
 }
 
 export async function getReportData(params: ReportFilters): Promise<ReportDataResponse> {
@@ -2340,7 +2345,7 @@ export async function downloadReportFile(params: ReportFilters): Promise<Blob> {
 
   if (data.type === "sales") {
     headers = ["Date", "Transactions", "Units Sold", "Revenue"];
-    rows = (data.rows as SalesReportRow[]).map((row) => [row.date, row.transactions, row.unitsSold, toMoney(row.revenue)]);
+    rows = (data.rows as SalesReportRow[]).map((row) => [formatDate(row.date), row.transactions, row.unitsSold, toMoney(row.revenue)]);
   } else if (data.type === "product") {
     headers = ["Product ID", "SKU", "Product Name", "Transactions", "Units Sold", "Revenue"];
     rows = (data.rows as ProductReportRow[]).map((row) => [row.productId, row.sku, row.productName, row.transactions, row.unitsSold, toMoney(row.revenue)]);
@@ -2355,8 +2360,8 @@ export async function downloadReportFile(params: ReportFilters): Promise<Blob> {
 
 export async function downloadBriefReportCSV(params: BriefReportParams): Promise<Blob> {
   const section = (params.section || "overall").toLowerCase();
-  const from = params.month ? `${params.month}-01` : (params.from || new Date(Date.now() - (6 * 24 * 60 * 60 * 1000)).toISOString().slice(0, 10));
-  const to = params.month ? monthEndIso(params.month) : (params.to || new Date().toISOString().slice(0, 10));
+  const from = params.month ? `${params.month}-01` : (params.from || toInputDate(new Date(Date.now() - (6 * 24 * 60 * 60 * 1000))));
+  const to = params.month ? monthEndIso(params.month) : (params.to || todayInputDate());
 
   const [stores, report] = await Promise.all([
     listStores(),
@@ -2381,7 +2386,7 @@ export async function downloadBriefReportCSV(params: BriefReportParams): Promise
 
   if (section === "sales") {
     headers = ["Date", "Transactions", "Units Sold", "Revenue"];
-    rows = (report.rows as SalesReportRow[]).map((row) => [row.date, row.transactions, row.unitsSold, toMoney(row.revenue)]);
+    rows = (report.rows as SalesReportRow[]).map((row) => [formatDate(row.date), row.transactions, row.unitsSold, toMoney(row.revenue)]);
   } else if (section === "accessories") {
     headers = ["Date", "Product", "Quantity", "Revenue"];
     const [sales, products] = await Promise.all([listSales(), listProducts()]);
@@ -2395,7 +2400,7 @@ export async function downloadBriefReportCSV(params: BriefReportParams): Promise
         .map((item) => {
           const product = productMap.get(item.product);
           return [
-            sale.sold_at.slice(0, 10),
+            formatDate(sale.sold_at.slice(0, 10)),
             product?.name || `Product ${item.product}`,
             item.quantity,
             toMoney(item.quantity * toNumber(item.unit_price)),
@@ -2408,7 +2413,7 @@ export async function downloadBriefReportCSV(params: BriefReportParams): Promise
     rows = buybacks
       .filter((entry) => withinRange(entry.created_at) && withinStore(entry.store_ref))
       .map((entry) => [
-        entry.created_at.slice(0, 10),
+        formatDate(entry.created_at.slice(0, 10)),
         entry.store_ref ? (storeNameById.get(entry.store_ref) || `Store ${entry.store_ref}`) : "-",
         entry.imei,
         `${entry.brand} ${entry.model}`.trim(),
@@ -2425,7 +2430,7 @@ export async function downloadBriefReportCSV(params: BriefReportParams): Promise
         const paid = toNumber(entry.got_amount) + toNumber(entry.in_cash) + toNumber(entry.in_online);
         const outstanding = Math.max(0, totalDue - paid);
         return [
-          entry.created_at.slice(0, 10),
+          formatDate(entry.created_at.slice(0, 10)),
           entry.ticket_no,
           entry.customer_name,
           entry.status,
@@ -2440,7 +2445,7 @@ export async function downloadBriefReportCSV(params: BriefReportParams): Promise
     rows = expenses
       .filter((entry) => withinRange(entry.expense_date) && withinStore(entry.store_ref))
       .map((entry) => [
-        entry.expense_date,
+        formatDate(entry.expense_date),
         entry.store_ref ? (storeNameById.get(entry.store_ref) || `Store ${entry.store_ref}`) : "-",
         entry.reason,
         toMoney(entry.out_cash),
@@ -2516,8 +2521,8 @@ export async function downloadBriefReportCSV(params: BriefReportParams): Promise
 
     headers = ["Metric", "Value"];
     rows = [
-      ["From Date", from],
-      ["To Date", to],
+      ["From Date", formatDate(from)],
+      ["To Date", formatDate(to)],
       ["Store Filter", storeId ? (storeNameById.get(storeId) || `Store ${storeId}`) : "All Stores"],
       ["Sales Transactions", totalTransactions],
       ["Sales Revenue", toMoney(totalRevenue)],

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { User } from '../types';
+import { formatDateTime } from '../utils/dateFormat';
 import {
   createProduct,
   deleteProduct,
@@ -690,11 +691,11 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
               <div><span>Current Stock ({detailRow.store_name})</span><strong>{detailRow.quantity}</strong></div>
               <div><span>Minimum Level</span><strong>{detailRow.min_stock_level}</strong></div>
               <div><span>Stock Status</span><strong>{detailRow.stock_status?.replace(/_/g, ' ') || '-'}</strong></div>
-              <div><span>Last Updated</span><strong>{new Date(detailRow.updated_at).toLocaleString()}</strong></div>
+              <div><span>Last Updated</span><strong>{formatDateTime(detailRow.updated_at)}</strong></div>
             </div>
 
             <h3>Transfer History</h3>
-            <div className="inventory-history">{transferHistory.map((entry) => <div key={entry.id}><strong>{entry.from_store_name} to {entry.to_store_name}</strong><span>{new Date(entry.transferred_at).toLocaleString()} | {entry.transferred_by || 'System'} | {entry.remarks}</span></div>)}{transferHistory.length === 0 && <p>No transfer history.</p>}</div>
+            <div className="inventory-history">{transferHistory.map((entry) => <div key={entry.id}><strong>{entry.from_store_name} to {entry.to_store_name}</strong><span>{formatDateTime(entry.transferred_at)} | {entry.transferred_by || 'System'} | {entry.remarks}</span></div>)}{transferHistory.length === 0 && <p>No transfer history.</p>}</div>
 
             <h3>Change History<button type="button" className="inventory-history-toggle" onClick={() => void openHistory()} disabled={historyLoading}>{historyLoading ? 'Loading...' : 'Refresh'}</button></h3>
             <div className="inventory-history">
@@ -702,7 +703,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
               {!historyLoading && productHistory.length === 0 && <p>No recorded price or status changes for this product yet.</p>}
               {!historyLoading && productHistory.map((entry) => (
                 <div key={entry.id} className="inventory-history-entry">
-                  <strong>{entry.changed_by} &middot; {new Date(entry.changed_at).toLocaleString()}</strong>
+                  <strong>{entry.changed_by} &middot; {formatDateTime(entry.changed_at)}</strong>
                   {entry.changes.map((change) => <span key={change.field}>{change.field}: {String(change.old_value)} &rarr; {String(change.new_value)}</span>)}
                   {entry.remark && <em>"{entry.remark}"</em>}
                 </div>

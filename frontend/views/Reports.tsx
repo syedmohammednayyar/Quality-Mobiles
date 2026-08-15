@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { getAdminReportOverview, listStores, type ApiStore } from "../services/api";
 import type { User } from "../types";
+import DateField from "../components/DateField";
+import { formatDate, formatDateTime, formatDayMonth } from "../utils/dateFormat";
 import "./Reports.css";
 
 type Tab = "stores" | "sales" | "inventory" | "movements" | "transfers" | "customers" | "employees" | "buybacks" | "financial" | "losses";
@@ -27,7 +29,8 @@ const isMoneyKey = (key: string) => !/percent/i.test(key) && /revenue|value|pric
 const isDateKey = (key: string) => /date|time|createdAt|updatedAt/i.test(key);
 const display = (key: string, value: unknown) => {
   if (value === null || value === undefined || value === "") return "-";
-  if (isDateKey(key)) { const d = new Date(String(value)); return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString(); }
+  // Date-only keys keep calendar semantics; timestamps keep their clock time.
+  if (isDateKey(key)) return /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? formatDate(String(value)) : formatDateTime(String(value), String(value));
   return isMoneyKey(key) ? money(value) : String(value);
 };
 const csvEscape = (value: unknown) => {
@@ -168,7 +171,7 @@ const Reports: React.FC<{ user: User }> = ({ user }) => {
       ? (stores.find((s) => s.id === user.assignedStoreId)?.name || "your store")
       : selectedStore ? (stores.find((s) => s.id === selectedStore)?.name || "the selected store") : "all stores";
     const dateLabel = quickRange === "custom"
-      ? `${fromDate || "?"} to ${toDate || "?"}`
+      ? `${fromDate ? formatDate(fromDate) : "?"} to ${toDate ? formatDate(toDate) : "?"}`
       : quickRange === "month_year"
         ? (month === "all" ? String(year) : `${MONTHS[Number(month) - 1] || ""} ${year}`)
         : pretty(quickRange).toLowerCase();
@@ -187,7 +190,9 @@ const Reports: React.FC<{ user: User }> = ({ user }) => {
 
     const csv = [
       columns.map(([, label]) => csvEscape(label)),
-      ...rows.map((row: any) => columns.map(([key]) => csvEscape(row[key] ?? ""))),
+      // Same values the table shows, formatted the same way — this is the
+      // human-readable export, not the raw system feed.
+      ...rows.map((row: any) => columns.map(([key]) => csvEscape(display(key, row[key])))),
     ].map((line) => line.join(",")).join("\n");
 
     const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" }));
@@ -220,7 +225,7 @@ const Reports: React.FC<{ user: User }> = ({ user }) => {
           {YEARS.map((y) => <option key={y} value={String(y)}>{y}</option>)}
         </select></label>
       </>}
-      {quickRange === "custom" && <><label><span>From</span><input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></label><label><span>To</span><input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} /></label></>}
+      {quickRange === "custom" && <><label><span>From</span><DateField value={fromDate} onChange={setFromDate} title="From date" /></label><label><span>To</span><DateField value={toDate} onChange={setToDate} title="To date" /></label></>}
       <label className="reports-search"><span>Global Search</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Job, IMEI, customer, employee, sale..." /></label>
     </section>
     {rangeError && <p className="reports-error">{rangeError}</p>}
@@ -229,7 +234,7 @@ const Reports: React.FC<{ user: User }> = ({ user }) => {
     {overview && <>
       <section className="reports-kpi-grid">{(KPI_SETS[tab] || []).filter((key) => overview.kpis[key] !== undefined).map((key) => <article className={`reports-kpi-card${/loss/i.test(key) ? " loss" : ""}`} key={key}><p>{pretty(key)}</p><h3>{isMoneyKey(key) ? money(overview.kpis[key]) : Number(overview.kpis[key] || 0).toLocaleString()}</h3></article>)}</section>
       <section className="reports-analytics">
-        <article><h2>Revenue Trend</h2><ResponsiveContainer width="100%" height={260}><LineChart data={overview.trends}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" /><YAxis /><Tooltip /><Legend /><Line dataKey="sales" stroke="#1677a6" strokeWidth={2} /><Line dataKey="buybacks" stroke="#e3a226" strokeWidth={2} /></LineChart></ResponsiveContainer></article>
+        <article><h2>Revenue Trend</h2><ResponsiveContainer width="100%" height={260}><LineChart data={overview.trends}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tickFormatter={(value: string) => formatDayMonth(value, value)} /><YAxis /><Tooltip labelFormatter={(value: string) => formatDate(value, value)} /><Legend /><Line dataKey="sales" stroke="#1677a6" strokeWidth={2} /><Line dataKey="buybacks" stroke="#e3a226" strokeWidth={2} /></LineChart></ResponsiveContainer></article>
         <article><h2>Store Comparison</h2><ResponsiveContainer width="100%" height={260}><BarChart data={overview.storePerformance}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="storeName" /><YAxis /><Tooltip /><Bar dataKey="revenue" fill="#1677a6" /><Bar dataKey="inventoryValue" fill="#e3a226" /></BarChart></ResponsiveContainer></article>
       </section>
       {tab === "losses" && <section className="reports-filters">

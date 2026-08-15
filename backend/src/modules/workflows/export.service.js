@@ -1,5 +1,22 @@
 import { withTransaction } from "../../db/mongodb.js";
 import { Sale, Product, StoreInventory, ChangeRequest, User, ExportLog } from "../../db/models.js";
+import { parseCalendarDate } from "../../utils/dateFormat.js";
+
+/**
+ * These are raw/system exports — the rows carry ObjectIds, so they are meant for
+ * machine consumption and keep ISO 8601 rather than the DD/Mon/YYYY display
+ * standard. They previously stringified Date objects directly, which produced
+ * "Fri Aug 15 2026 16:30:00 GMT+0530 (India Standard Time)" — a value that
+ * changes with the server's timezone and locale, and that spreadsheets parse
+ * inconsistently. ISO is stable and sorts correctly.
+ *
+ * Human-readable report exports are formatted separately, in the Reports module.
+ */
+function toIsoTimestamp(value) {
+  if (value === null || value === undefined || value === "") return "";
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
 
 /**
  * Sanitize CSV value to prevent injection attacks
@@ -44,12 +61,16 @@ export async function exportSalesToCSV(filters, userId) {
     if (filters.fromDate || filters.toDate) {
       query.createdAt = {};
       if (filters.fromDate) {
-        query.createdAt.$gte = new Date(filters.fromDate);
+        // Local calendar day — `new Date("2026-08-01")` is UTC midnight and
+        // would start the export a day early west of Greenwich.
+        query.createdAt.$gte = parseCalendarDate(filters.fromDate);
       }
       if (filters.toDate) {
-        const toDate = new Date(filters.toDate);
-        toDate.setDate(toDate.getDate() + 1);
-        query.createdAt.$lt = toDate;
+        const toDate = parseCalendarDate(filters.toDate);
+        if (toDate) {
+          toDate.setDate(toDate.getDate() + 1);
+          query.createdAt.$lt = toDate;
+        }
       }
     }
 
@@ -95,7 +116,7 @@ export async function exportSalesToCSV(filters, userId) {
       sanitizeCsvValue(row.grandTotal),
       sanitizeCsvValue(row.amountPaid),
       sanitizeCsvValue(row.paymentStatus),
-      sanitizeCsvValue(row.createdAt),
+      sanitizeCsvValue(toIsoTimestamp(row.createdAt)),
       sanitizeCsvValue(row.jobNumber),
       sanitizeCsvValue(row.icNumber),
     ]);
@@ -204,12 +225,16 @@ export async function exportBuybacksToCSV(filters, userId) {
     if (filters.fromDate || filters.toDate) {
       query.createdAt = {};
       if (filters.fromDate) {
-        query.createdAt.$gte = new Date(filters.fromDate);
+        // Local calendar day — `new Date("2026-08-01")` is UTC midnight and
+        // would start the export a day early west of Greenwich.
+        query.createdAt.$gte = parseCalendarDate(filters.fromDate);
       }
       if (filters.toDate) {
-        const toDate = new Date(filters.toDate);
-        toDate.setDate(toDate.getDate() + 1);
-        query.createdAt.$lt = toDate;
+        const toDate = parseCalendarDate(filters.toDate);
+        if (toDate) {
+          toDate.setDate(toDate.getDate() + 1);
+          query.createdAt.$lt = toDate;
+        }
       }
     }
 
@@ -262,7 +287,7 @@ export async function exportBuybacksToCSV(filters, userId) {
       sanitizeCsvValue(b.condition || ""),
       sanitizeCsvValue(b.negotiatedPrice || ""),
       sanitizeCsvValue(b.status || ""),
-      sanitizeCsvValue(b.createdAt),
+      sanitizeCsvValue(toIsoTimestamp(b.createdAt)),
     ]);
 
     const csv = [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
@@ -329,12 +354,16 @@ export async function exportChangeRequestsToCSV(filters, userId) {
     if (filters.fromDate || filters.toDate) {
       query.createdAt = {};
       if (filters.fromDate) {
-        query.createdAt.$gte = new Date(filters.fromDate);
+        // Local calendar day — `new Date("2026-08-01")` is UTC midnight and
+        // would start the export a day early west of Greenwich.
+        query.createdAt.$gte = parseCalendarDate(filters.fromDate);
       }
       if (filters.toDate) {
-        const toDate = new Date(filters.toDate);
-        toDate.setDate(toDate.getDate() + 1);
-        query.createdAt.$lt = toDate;
+        const toDate = parseCalendarDate(filters.toDate);
+        if (toDate) {
+          toDate.setDate(toDate.getDate() + 1);
+          query.createdAt.$lt = toDate;
+        }
       }
     }
 
@@ -379,7 +408,7 @@ export async function exportChangeRequestsToCSV(filters, userId) {
       sanitizeCsvValue(row.status),
       sanitizeCsvValue(row.requestedBy?.username),
       sanitizeCsvValue(row.approvedBy?.username),
-      sanitizeCsvValue(row.createdAt),
+      sanitizeCsvValue(toIsoTimestamp(row.createdAt)),
     ]);
 
     const csv = [headers.join(","), ...rows.map((row) => row.join(","))].join(

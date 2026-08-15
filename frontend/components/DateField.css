@@ -1,0 +1,66 @@
+/* Application-standard date input. The native control is layered transparently
+   over our own DD/Mon/YYYY text so the picker still works while the OS regional
+   format never reaches the screen. */
+.date-field {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.date-field:focus-within {
+  border-color: var(--color-primary-600);
+  outline: 2px solid color-mix(in srgb, var(--color-primary-600) 28%, transparent);
+  outline-offset: -1px;
+}
+
+.date-field.disabled { opacity: .6; }
+
+.date-field-text {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .01em;
+}
+
+.date-field-text.placeholder { color: var(--text-secondary); font-weight: 700; }
+
+.date-field-icon { flex-shrink: 0; color: var(--text-secondary); }
+
+/* Covers the whole field: invisible, but still the real focusable control, so
+   keyboard, calendar, min/max and form validation all behave natively. */
+.date-field-native {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  opacity: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.date-field-native:disabled { cursor: not-allowed; }
+
+/* Keep the native calendar affordance clickable across the field in Chromium. */
+.date-field-native::-webkit-calendar-picker-indicator {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}

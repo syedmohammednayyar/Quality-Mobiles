@@ -5,6 +5,8 @@ import {
 } from "recharts";
 import { getDashboardSummary, type DashboardRangeKey, type DashboardSummary } from "../services/api";
 import { useStoreSelection } from "../context/StoreSelectionContext";
+import DateField from "../components/DateField";
+import { formatDateTime, toInputDate, todayInputDate } from "../utils/dateFormat";
 import type { User } from "../types";
 import "./Dashboard.css";
 
@@ -44,8 +46,10 @@ const lossKpiLabels: Array<[string, string, boolean]> = [
 
 const BREAKDOWN_COLORS = ["#1677a6", "#e3a226", "#3f9d6a", "#a4548f", "#7a6ff0", "#c4593c"];
 
-const today = () => new Date().toISOString().slice(0, 10);
-const monthStart = () => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10); };
+// Local calendar days. `toISOString().slice(0, 10)` would convert to UTC first
+// and hand back yesterday for anyone east of Greenwich in the small hours.
+const today = () => todayInputDate();
+const monthStart = () => { const d = new Date(); return toInputDate(new Date(d.getFullYear(), d.getMonth(), 1)); };
 
 const Dashboard: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
@@ -131,8 +135,8 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
         ))}
         {range === "custom" && (
           <span className="dash-range-dates">
-            <input type="date" value={fromDate} max={toDate} onChange={(e) => setFromDate(e.target.value)} />
-            <input type="date" value={toDate} min={fromDate} onChange={(e) => setToDate(e.target.value)} />
+            <DateField value={fromDate} max={toDate} onChange={setFromDate} title="From date" />
+            <DateField value={toDate} min={fromDate} onChange={setToDate} title="To date" />
           </span>
         )}
       </div>
@@ -203,9 +207,14 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
           <ResponsiveContainer width="100%" height={240}>
             <LineChart data={summary.salesTrend}>
               <CartesianGrid strokeDasharray="3 3" />
+              {/* Ticks stay compact (15/Aug); the tooltip carries the full
+                  DD/Mon/YYYY, where there is room for it. */}
               <XAxis dataKey="label" />
               <YAxis />
-              <Tooltip formatter={(value: number) => money(value)} />
+              <Tooltip
+                formatter={(value: number) => money(value)}
+                labelFormatter={(label: string, payload: any) => payload?.[0]?.payload?.fullLabel || label}
+              />
               <Line type="monotone" dataKey="revenue" stroke="#1677a6" strokeWidth={2} dot={false} name="Revenue" />
             </LineChart>
           </ResponsiveContainer>
@@ -367,7 +376,7 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
                 <td>{sale.salesman || "-"}</td>
                 <td>{money(sale.amount)}</td>
                 <td>{sale.status || "-"}</td>
-                <td>{new Date(sale.time).toLocaleString()}</td>
+                <td>{formatDateTime(sale.time)}</td>
               </tr>
             ))}
             {summary.recentSales.length === 0 && <tr><td colSpan={8} className="dash-empty">No sales data available for {scopeName} in this period.</td></tr>}
@@ -387,7 +396,7 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
                 <td>{loss.saleNo}</td><td>{loss.product}</td><td>{loss.store}</td><td>{loss.employee}</td>
                 <td>{money(loss.costBasis)}</td><td>{money(loss.soldAmount)}</td>
                 <td className="loss-amount">{money(loss.lossAmount)}</td><td>{loss.reason}</td>
-                <td>{new Date(loss.time).toLocaleString()}</td>
+                <td>{formatDateTime(loss.time)}</td>
               </tr>
             ))}
             {(!summary.recentLosses || summary.recentLosses.length === 0) && (

@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import DateField from "../components/DateField";
+import { formatDate, formatDateTime } from "../utils/dateFormat";
 import {
   exportLosses,
   getLoss,
@@ -191,8 +193,8 @@ const LossManagement: React.FC<{ user: User }> = ({ user }) => {
           </select>
         </label>
         {quickRange === "custom" && <>
-          <label><span>From</span><input type="date" value={fromDate} onChange={(e) => { setFromDate(e.target.value); setPage(0); }} /></label>
-          <label><span>To</span><input type="date" value={toDate} onChange={(e) => { setToDate(e.target.value); setPage(0); }} /></label>
+          <label><span>From</span><DateField value={fromDate} onChange={(v) => { setFromDate(v); setPage(0); }} title="From date" /></label>
+          <label><span>To</span><DateField value={toDate} onChange={(v) => { setToDate(v); setPage(0); }} title="To date" /></label>
         </>}
         <label><span>Store</span>
           <select value={isManager ? (user.assignedStoreId || "") : storeId} onChange={(e) => { setStoreId(e.target.value); setPage(0); }} disabled={isManager}>
@@ -251,7 +253,7 @@ const LossManagement: React.FC<{ user: User }> = ({ user }) => {
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.id} className="loss-table-row" onClick={() => void openDetail(row.id)}>
-                    <td>{new Date(row.created_at).toLocaleDateString()}</td>
+                    <td>{formatDate(row.created_at)}</td>
                     <td>{row.sale_no}</td>
                     <td>{row.store_name}</td>
                     <td>{row.employee_name}</td>
@@ -317,7 +319,7 @@ const LossManagement: React.FC<{ user: User }> = ({ user }) => {
                   <dt>Reason</dt><dd>{detail.loss_reason || "-"}</dd>
                   <dt>Status</dt><dd><span className={`loss-status-pill ${detail.loss_status}`}>{detail.loss_status}</span></dd>
                   {detail.loss_status === "reversed" && <><dt>Reversal Reason</dt><dd>{detail.reversal_reason || "-"}</dd></>}
-                  <dt>Created</dt><dd>{new Date(detail.created_at).toLocaleString()}</dd>
+                  <dt>Created</dt><dd>{formatDateTime(detail.created_at)}</dd>
                 </dl>
               </div>
             )}

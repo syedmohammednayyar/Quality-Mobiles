@@ -3,6 +3,7 @@ import {
   BulkInventory, Customer, ExchangeDevice, LossRecord, PriceAdjustment,
   Product, Sale, SerializedInventory, StockLedger, Store,
 } from "../../db/models.js";
+import { formatDate, formatDateRange, formatDayMonth, formatMonthYear, parseCalendarDate } from "../../utils/dateFormat.js";
 
 const oid   = (value) => new mongoose.Types.ObjectId(value);
 const money = (value) => Number(value || 0);
@@ -43,14 +44,19 @@ export function resolveDateRange({ rangeKey = "today", fromDate, toDate } = {}) 
   const now = new Date();
 
   if (rangeKey === "custom" && (fromDate || toDate)) {
-    const from = fromDate ? startOfDay(new Date(fromDate)) : startOfDay(new Date(toDate));
-    const to   = toDate   ? endOfDay(new Date(toDate))     : endOfDay(new Date(fromDate));
-    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    // parseCalendarDate, not `new Date(str)`: the latter reads "2026-08-01" as
+    // UTC midnight and would shift the whole window back a day on any server
+    // west of Greenwich, querying dates the user never asked for.
+    const fromParsed = parseCalendarDate(fromDate || toDate);
+    const toParsed   = parseCalendarDate(toDate || fromDate);
+    if (!fromParsed || !toParsed) {
       return { rangeKey: "today", from: startOfDay(), to: endOfDay(), label: "Today" };
     }
+    const from = startOfDay(fromParsed);
+    const to   = endOfDay(toParsed);
     // Tolerate a reversed range instead of silently returning nothing.
     const [start, end] = from <= to ? [from, to] : [to, from];
-    return { rangeKey: "custom", from: start, to: end, label: `${start.toLocaleDateString()} - ${end.toLocaleDateString()}` };
+    return { rangeKey: "custom", from: start, to: end, label: formatDateRange(start, end) };
   }
 
   switch (rangeKey) {
@@ -172,9 +178,11 @@ async function salesTrend(storeId, from, to) {
     const hit = found.get(key);
     buckets.push({
       date:         key,
-      label:        byMonth
-        ? cursor.toLocaleDateString(undefined, { month: "short", year: "2-digit" })
-        : cursor.toLocaleDateString(undefined, { day: "2-digit", month: "short" }),
+      // Compact tick label; `fullLabel` carries the full application format for
+      // the tooltip. Both are locale-independent — `toLocaleDateString` here
+      // followed the server's locale, not the application standard.
+      label:        byMonth ? formatMonthYear(cursor) : formatDayMonth(cursor),
+      fullLabel:    byMonth ? formatMonthYear(cursor) : formatDate(cursor),
       sales:        hit?.sales        || 0,
       revenue:      money(hit?.revenue),
       grossRevenue: money(hit?.grossRevenue),
