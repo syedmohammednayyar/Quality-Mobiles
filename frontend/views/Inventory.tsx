@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { User } from '../types';
 import { formatDateTime } from '../utils/dateFormat';
+import { calculateMargin, type MarginStatus } from '../utils/margin';
+import { LossWarning, MarginAmount, MarginBadge, MarginPercent, MarginSummaryPanel } from '../components/MarginBadge';
 import {
   createProduct,
   deleteProduct,
@@ -119,6 +121,9 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
   const [transferRow, setTransferRow] = useState<ApiStoreInventoryRow | null>(null);
   const [transferStoreId, setTransferStoreId] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  // 'all' | 'PROFIT' | 'BREAK_EVEN' | 'LOSS' — lets a manager pull up every
+  // product currently priced below cost in one step.
+  const [marginFilter, setMarginFilter] = useState<'all' | MarginStatus>('all');
   const [brandFilter, setBrandFilter] = useState('all');
   const [detailRow, setDetailRow] = useState<ApiStoreInventoryRow | null>(null);
   const [transferHistory, setTransferHistory] = useState<ApiProductTransferHistory[]>([]);
@@ -186,18 +191,42 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
     supplier_name: form.supplier_name,
   }), [form.brand, form.category, form.supplier_name]);
 
+  // Margin is computed once per row here and reused by the table, the filter
+  // and the summary, so the three can never disagree.
+  const rowsWithMargin = useMemo(() => rows.map((row) => ({
+    row,
+    margin: calculateMargin({
+      purchasePrice: row.purchase_price,
+      sellingPrice: row.selling_price || row.unit_price,
+    }),
+  })), [rows]);
+
   const filteredRows = useMemo(() => {
-    return rows.filter((row) => (
+    return rowsWithMargin.filter(({ row, margin }) => (
       (statusFilter === 'all' || row.inventory_status === statusFilter)
       && (brandFilter === 'all' || row.brand === brandFilter)
-    )).sort((a, b) => {
+      // Products with no recorded cost cannot be judged, so they are excluded
+      // from margin filtering rather than silently counted as break-even.
+      && (marginFilter === 'all' || (!margin.costUnknown && margin.status === marginFilter))
+    )).map(({ row }) => row).sort((a, b) => {
       const dir = sortDir === 'asc' ? 1 : -1;
       if (sortKey === 'price') return (Number(a.final_price || a.unit_price) - Number(b.final_price || b.unit_price)) * dir;
       if (sortKey === 'value') return (Number(a.final_price || a.unit_price) - Number(b.final_price || b.unit_price)) * dir;
       if (sortKey === 'updated') return (new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()) * dir;
       return a.name.localeCompare(b.name) * dir;
     });
-  }, [rows, sortDir, sortKey, statusFilter, brandFilter]);
+  }, [rowsWithMargin, sortDir, sortKey, statusFilter, brandFilter, marginFilter]);
+
+  const marginOf = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof calculateMargin>>();
+    rowsWithMargin.forEach(({ row, margin }) => map.set(`${row.store_id}-${row.product_id}`, margin));
+    return map;
+  }, [rowsWithMargin]);
+
+  const lossMakingCount = useMemo(
+    () => rowsWithMargin.filter(({ margin }) => margin.isLoss).length,
+    [rowsWithMargin],
+  );
 
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
   const pagedRows = filteredRows.slice((page - 1) * pageSize, page * pageSize);
@@ -448,6 +477,11 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
             <span>Selling Price</span>
             <input type="number" min="0" value={form.price || ''} onChange={(event) => updateForm({ price: event.target.value })} required />
           </label>
+          {/* Warns as soon as both prices are entered. Non-blocking by design —
+              clearance and damaged stock are legitimate below-cost sales. */}
+          <div className="inventory-form-wide">
+            <LossWarning result={calculateMargin({ purchasePrice: form.purchase_price, sellingPrice: form.price })} />
+          </div>
           <label>
             <span>IMEI</span>
             <input value={form.imei || ''} onChange={(event) => updateForm({ imei: event.target.value })} placeholder="Unique IMEI" />
@@ -528,6 +562,12 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
               <option value="all">All Statuses</option><option value="ready">Ready for Sale</option><option value="under_repair">Under Repair</option><option value="sold">Sold</option>
             </select>
+            <select value={marginFilter} onChange={(event) => setMarginFilter(event.target.value as 'all' | MarginStatus)} title="Filter by pricing margin">
+              <option value="all">All Margins</option>
+              <option value="LOSS">Loss-Making Only{lossMakingCount > 0 ? ` (${lossMakingCount})` : ''}</option>
+              <option value="BREAK_EVEN">Break-Even</option>
+              <option value="PROFIT">Profitable</option>
+            </select>
             <select value={sortKey} onChange={(event) => setSortKey(event.target.value as SortKey)}>
               <option value="updated">Recently Updated</option>
               <option value="name">Product Name</option>
@@ -549,14 +589,19 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
                 <th>Store</th>
                 <th>Purchase Price</th>
                 <th>Selling Price</th>
+                <th>Margin</th>
+                <th>Margin %</th>
+                <th>Margin Status</th>
                 <th>Product Type</th>
                 <th>Status</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {pagedRows.map((row) => (
-                <tr key={`${row.store_id}-${row.product_id}`}>
+              {pagedRows.map((row) => {
+                const margin = marginOf.get(`${row.store_id}-${row.product_id}`)!;
+                return (
+                <tr key={`${row.store_id}-${row.product_id}`} className={margin.isLoss ? 'row-loss' : undefined}>
                   <td><strong>{row.job_id || '-'}</strong></td>
                   <td><strong>{row.brand || '-'}</strong></td>
                   <td><strong>{row.model || '-'}</strong></td>
@@ -568,6 +613,9 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
                   <td>{isAdmin
                     ? <input key={`sp-${row.product_id}-${row.selling_price || row.unit_price}`} className="inline-input money" type="number" min="0" defaultValue={row.selling_price || row.unit_price || ''} onBlur={(event) => requestInlineChange(row, 'selling_price', event.target.value)} title="Admin only — a remark is required to save" />
                     : <strong>Rs {toMoney(Number(row.selling_price || row.unit_price))}</strong>}</td>
+                  <td><MarginAmount result={margin} /></td>
+                  <td><MarginPercent result={margin} /></td>
+                  <td><MarginBadge result={margin} /></td>
                   <td><span className={row.category === 'used_phone' ? 'inventory-type used' : 'inventory-type new'}>{row.category === 'used_phone' ? 'USED PHONE' : 'NEW'}</span></td>
                   <td>
                     {isAdmin ? (
@@ -588,13 +636,15 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
                     </div>
                   </td>
                 </tr>
-              ))}
-              {!loading && pagedRows.length === 0 && <tr><td colSpan={10} className="inventory-empty">
+                );
+              })}
+              {!loading && pagedRows.length === 0 && <tr><td colSpan={13} className="inventory-empty">
                 <strong>No products found</strong>
                 <span>Nothing matches {[
                   debouncedSearch && `"${debouncedSearch}"`,
                   brandFilter !== 'all' && brandFilter,
                   statusFilter !== 'all' && statusFilter.replace(/_/g, ' '),
+                  marginFilter !== 'all' && `${marginFilter.replace(/_/g, '-').toLowerCase()} margin`,
                   visibleStores.find((s) => s.id === selectedStoreId)?.name,
                 ].filter(Boolean).join(' · ') || 'the current filters'}. Try changing the search, brand or status filter.</span>
               </td></tr>}
@@ -672,6 +722,15 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
               <div><span>Selling Price</span><strong>Rs {toMoney(detailRow.selling_price || detailRow.unit_price)}</strong></div>
               <div><span>Final Price</span><strong>Rs {toMoney(detailRow.final_price || detailRow.unit_price)}</strong></div>
             </div>
+            {/* The same margin rule as the listing — a product priced below cost
+                is identifiable here without any mental arithmetic. */}
+            <MarginSummaryPanel
+              result={calculateMargin({
+                purchasePrice: detailRow.purchase_price,
+                sellingPrice: detailRow.final_price || detailRow.selling_price || detailRow.unit_price,
+              })}
+              title="Margin"
+            />
 
             <h3>Store Stock{storeStock && <span className="inventory-total-stock">Total: {storeStock.total_stock}</span>}</h3>
             <div className="inventory-detail-grid">
@@ -720,6 +779,22 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
           <div className="inventory-edit-confirm">
             <h2>Confirm Change</h2>
             <div className="inventory-edit-confirm-row"><span>{pendingEdit.label}</span><strong>{pendingEdit.oldValue} &rarr; {pendingEdit.newValue}</strong></div>
+            {/* The margin this edit will produce, shown before it is saved. */}
+            {pendingEdit.field !== 'inventory_status' && (() => {
+              const next = Number(pendingEdit.newValue.replace(/[^0-9.]/g, '')) || 0;
+              const result = calculateMargin(
+                pendingEdit.field === 'purchase_price'
+                  ? { purchasePrice: next, sellingPrice: pendingEdit.row.selling_price || pendingEdit.row.unit_price }
+                  : { purchasePrice: pendingEdit.row.purchase_price, sellingPrice: next },
+              );
+              return <>
+                <div className="inventory-edit-confirm-row">
+                  <span>Resulting Margin</span>
+                  <strong><MarginAmount result={result} /> &middot; <MarginPercent result={result} /> &middot; <MarginBadge result={result} /></strong>
+                </div>
+                <LossWarning result={result} />
+              </>;
+            })()}
             <label className="inventory-edit-remark-label">
               <span>Remark (required)</span>
               <textarea value={remarkText} onChange={(event) => setRemarkText(event.target.value)} placeholder="Why is this changing? e.g. Market price adjustment" rows={3} autoFocus />

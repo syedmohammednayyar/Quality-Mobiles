@@ -570,6 +570,12 @@ export async function listSales(input) {
       adjustment_delta: Number(item.lineAdjustmentDelta || 0).toFixed(2),
       adjustment_reason:item.adjustmentReason || null,
       line_total:       Number(item.lineTotal || 0).toFixed(2),
+      // Loss snapshot as recorded at the time of sale. Read back verbatim and
+      // never recomputed from today's prices, so history stays truthful.
+      cost_basis:              Number(item.costBasis || 0).toFixed(2),
+      effective_selling_amount:Number(item.effectiveSellingAmount || 0).toFixed(2),
+      gross_result:            Number(item.grossResult || 0).toFixed(2),
+      is_loss:                 Boolean(item.isLoss),
     })),
   }));
 }

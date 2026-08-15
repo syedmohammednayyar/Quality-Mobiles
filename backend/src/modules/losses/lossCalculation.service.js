@@ -63,6 +63,78 @@ export function evaluateLoss({ costBasisCents, effectiveSellingAmountCents }) {
   return { grossResultCents, isLoss, lossAmountCents, lossPercentage };
 }
 
+// ─── Margin: the canonical rule ─────────────────────────────────────────────
+// One definition of margin for the whole application. Sale-time loss recording
+// (evaluateSaleItemLoss below) and catalogue/pre-sale margin (Inventory, POS,
+// product details) are the same arithmetic, so they cannot disagree.
+//
+//   effectiveSellingPrice = sellingPrice x quantity - discount
+//   totalMargin           = effectiveSellingPrice - purchasePrice x quantity
+//
+// `discount` is a line-level total, matching the per-item discount allocation
+// used at sale time — not a per-unit figure.
+//
+// All arithmetic runs in integer cents; floats would drift and make the
+// break-even comparison unreliable at the exact boundary.
+
+export const MARGIN_STATUS = { PROFIT: "PROFIT", BREAK_EVEN: "BREAK_EVEN", LOSS: "LOSS" };
+
+/**
+ * Tolerant money coercion, deliberately unlike the strict `toCents` above.
+ *
+ * `toCents` throws on bad input, which is right when *writing* a sale — a
+ * malformed price must be rejected at the boundary. But margin is also a
+ * read-time display concern: a single legacy product with a junk price should
+ * render as "N/A" in the Inventory table, not throw and blank the whole page.
+ */
+function toCentsForDisplay(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.round(n * 100) : 0;
+}
+
+export function calculateMargin({ purchasePrice, sellingPrice, discount = 0, quantity = 1 } = {}) {
+  const units = Math.max(1, Number(quantity) || 1);
+  const unitCostCents    = toCentsForDisplay(purchasePrice);
+  const unitSellCents    = toCentsForDisplay(sellingPrice);
+  const discountCents    = toCentsForDisplay(discount);
+
+  const originalSellingCents  = unitSellCents * units;
+  const effectiveSellingCents = originalSellingCents - discountCents;
+  const totalCostCents        = unitCostCents * units;
+  const totalMarginCents      = effectiveSellingCents - totalCostCents;
+
+  const status = totalMarginCents < 0
+    ? MARGIN_STATUS.LOSS
+    : totalMarginCents > 0 ? MARGIN_STATUS.PROFIT : MARGIN_STATUS.BREAK_EVEN;
+
+  // Percentage is margin against cost. With no cost recorded there is no
+  // meaningful denominator, so it stays null rather than dividing by zero and
+  // rendering Infinity or NaN to a user.
+  const marginPercentage = totalCostCents > 0
+    ? Number(((totalMarginCents / totalCostCents) * 100).toFixed(2))
+    : null;
+
+  return {
+    quantity:               units,
+    unitPurchasePrice:      fromCents(unitCostCents),
+    originalSellingPrice:   fromCents(originalSellingCents),
+    discount:               fromCents(discountCents),
+    effectiveSellingPrice:  fromCents(effectiveSellingCents),
+    totalCost:              fromCents(totalCostCents),
+    // Rounded per-unit view; totalMargin stays authoritative for money figures.
+    unitMargin:             fromCents(Math.round(totalMarginCents / units)),
+    totalMargin:            fromCents(totalMarginCents),
+    marginPercentage,
+    status,
+    isLoss:                 status === MARGIN_STATUS.LOSS,
+    // Positive magnitudes, matching how LossRecord stores a loss.
+    lossAmount:             totalMarginCents < 0 ? fromCents(-totalMarginCents) : 0,
+    lossPercentage:         totalMarginCents < 0 && totalCostCents > 0
+      ? Number(((-totalMarginCents / totalCostCents) * 100).toFixed(2))
+      : 0,
+  };
+}
+
 // ─── Loss classification ────────────────────────────────────────────────────
 
 export function classifyLossType({ hasBuyback, priceWasAdjusted, adjustmentCategory }) {

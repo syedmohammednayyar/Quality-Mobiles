@@ -177,6 +177,12 @@ export interface ApiSaleItem {
   price_was_adjusted?: boolean;
   adjustment_delta?: string;
   adjustment_reason?: string | null;
+  // Loss snapshot recorded at sale time. Absent on sales predating Loss
+  // Management, which is why every consumer must treat these as optional.
+  cost_basis?: string;
+  effective_selling_amount?: string;
+  gross_result?: string;
+  is_loss?: boolean;
   // fields sent on create (used by POS)
   adjustedUnitPrice?: number;
   adjustmentReason?: string;

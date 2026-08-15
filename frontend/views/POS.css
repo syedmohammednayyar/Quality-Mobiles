@@ -729,3 +729,12 @@
     text-align: center;
   }
 }
+
+/* Loss preview: enough weight to stop a cashier, not enough to become noise. */
+.pos-loss-alert{display:flex;flex-direction:column;gap:8px}
+.pos-loss-lines{margin:0;padding:0 0 0 2px;list-style:none;display:flex;flex-direction:column;gap:4px}
+.pos-loss-lines li{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;font-size:12px}
+.pos-loss-lines li > span:first-child{font-weight:850}
+.pos-loss-lines li > span:nth-child(2){color:var(--text-secondary);font-size:11px;flex:1}
+.pos-loss-lines li > strong{font-weight:900;font-variant-numeric:tabular-nums}
+.pos-loss-net{display:flex;align-items:center;gap:8px;padding-top:6px;border-top:1px solid var(--color-error-100);font-size:12px;font-weight:850}

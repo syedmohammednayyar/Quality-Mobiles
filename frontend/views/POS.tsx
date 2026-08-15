@@ -11,6 +11,8 @@ import {
   type ApiStoreInventoryRow,
   type ApiStore,
 } from '../services/api';
+import { calculateCartMargins, marginClass, type MarginResult } from '../utils/margin';
+import { MarginAmount, MarginBadge } from '../components/MarginBadge';
 import './POS.css';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -103,22 +105,20 @@ const mapProduct = (product: ApiStoreInventoryRow): PosProduct => {
 
 interface CartItemRowProps {
   item: PosCartItem;
+  margin:           MarginResult;
   onPriceChange:    (id: string, price: number) => void;
   onCategoryChange: (id: string, cat: AdjustmentCategory) => void;
   onReasonChange:   (id: string, reason: string) => void;
   onRemove:         (id: string) => void;
 }
 
-const CartItemRow: React.FC<CartItemRowProps> = ({ item, onPriceChange, onCategoryChange, onReasonChange, onRemove }) => {
+const CartItemRow: React.FC<CartItemRowProps> = ({ item, margin, onPriceChange, onCategoryChange, onReasonChange, onRemove }) => {
   const billedPrice = item.adjustedPrice ?? item.price;
   const priceChanged = billedPrice !== item.price;
-  // Loss Management: client-side preview only (item-level cost vs. billed price).
-  // The backend is the sole financial authority — this never blocks the sale.
-  const hasCostBasis = item.purchasePrice > 0;
-  const isLossPreview = hasCostBasis && billedPrice < item.purchasePrice;
-  const isProfitPreview = hasCostBasis && billedPrice > item.purchasePrice;
-  const previewDelta = Math.abs(billedPrice - item.purchasePrice);
-  const previewPct = hasCostBasis ? Math.round((previewDelta / item.purchasePrice) * 100) : 0;
+  // Margin comes from the shared calculator, computed at cart level so this row
+  // already carries its share of the bill-level discount. Preview only — the
+  // backend remains the financial authority and this never blocks the sale.
+  const hasCostBasis = !margin.costUnknown;
 
   return (
     <div className={`pos-cart-row${priceChanged ? ' price-adjusted' : ''}`}>
@@ -131,10 +131,10 @@ const CartItemRow: React.FC<CartItemRowProps> = ({ item, onPriceChange, onCatego
           </span>
         )}
         {hasCostBasis && (
-          <span className={`pos-cost-indicator ${isLossPreview ? 'loss' : isProfitPreview ? 'profit' : 'even'}`}>
+          <span className={`pos-cost-indicator ${marginClass(margin.status)}`}>
             Cost: Rs {toMoney(item.purchasePrice)}
-            {isLossPreview && <> &middot; <strong>⚠ Loss Rs {toMoney(previewDelta)} ({previewPct}%)</strong></>}
-            {isProfitPreview && <> &middot; <strong>✓ Profit Rs {toMoney(previewDelta)}</strong></>}
+            {margin.discount > 0 && <> &middot; incl. Rs {toMoney(margin.discount)} bill discount</>}
+            {' '}&middot; <MarginAmount result={margin} /> <MarginBadge result={margin} compact />
           </span>
         )}
       </div>
@@ -284,8 +284,22 @@ const POS: React.FC<POSProps> = ({ user }) => {
   const adjustmentTotal   = useMemo(() => originalSubtotal - adjustedSubtotal, [originalSubtotal, adjustedSubtotal]);
   const exchangeTotal     = useMemo(() => exchangeDevices.reduce((sum, d) => sum + d.exchangeValue, 0), [exchangeDevices]);
   const finalAmount       = useMemo(() => Math.max(0, adjustedSubtotal - discount - exchangeTotal), [adjustedSubtotal, discount, exchangeTotal]);
-  // Loss Management: non-blocking preview of below-cost items in the cart (spec §9 — informational only)
-  const lossItemsInCart   = useMemo(() => cart.filter((item) => item.purchasePrice > 0 && (item.adjustedPrice ?? item.price) < item.purchasePrice), [cart]);
+  // Loss preview. Uses the shared margin rule with the bill-level discount
+  // allocated across lines exactly as the backend will allocate it at sale
+  // time, so what the cashier sees here is what Loss Management records.
+  // Non-blocking by design — clearance and damaged stock are legitimate.
+  const cartMargins = useMemo(() => calculateCartMargins(
+    cart.map((item) => ({
+      purchasePrice: item.purchasePrice,
+      sellingPrice: item.adjustedPrice ?? item.price,
+      quantity: 1,
+    })),
+    discount,
+  ), [cart, discount]);
+  const lossItemsInCart = useMemo(
+    () => cart.filter((_, index) => cartMargins.lines[index]?.isLoss),
+    [cart, cartMargins],
+  );
 
   // ── Cart mutations ──────────────────────────────────────────────────────
   const addToCart = (product: PosProduct) => {
@@ -452,9 +466,34 @@ const POS: React.FC<POSProps> = ({ user }) => {
         </div>
       )}
 
-      {lossItemsInCart.length > 0 && (
-        <div className="pos-alert warning">
-          ⚠ LOSS DETECTED — {lossItemsInCart.length} item{lossItemsInCart.length > 1 ? 's' : ''} in this bill are priced below cost. This will not block the sale, but it will be recorded in Loss Management.
+      {cartMargins.lossLines > 0 && (
+        <div className="pos-alert warning pos-loss-alert">
+          <div>
+            <strong>⚠ LOSS DETECTED</strong> — {cartMargins.lossLines} item{cartMargins.lossLines > 1 ? 's' : ''} in this bill {cartMargins.lossLines > 1 ? 'are' : 'is'} priced below cost,
+            for a total loss of <strong>Rs {Math.round(cartMargins.totalLossAmount).toLocaleString()}</strong>.
+            This will not block the sale, but it will be recorded in Loss Management.
+          </div>
+          <ul className="pos-loss-lines">
+            {cart.map((item, index) => {
+              const line = cartMargins.lines[index];
+              if (!line?.isLoss) return null;
+              return (
+                <li key={item.id}>
+                  <span>{item.name}</span>
+                  <span>
+                    cost Rs {Math.round(line.totalCost).toLocaleString()} &rarr; final Rs {Math.round(line.effectiveSellingPrice).toLocaleString()}
+                    {line.discount > 0 ? ` (incl. Rs ${Math.round(line.discount).toLocaleString()} bill discount)` : ''}
+                  </span>
+                  <strong>-Rs {Math.round(line.lossAmount).toLocaleString()}</strong>
+                </li>
+              );
+            })}
+          </ul>
+          {/* One below-cost item does not make the whole bill a loss. */}
+          <div className="pos-loss-net">
+            Transaction margin: <MarginBadge result={cartMargins.total} />{' '}
+            <strong>{cartMargins.total.totalMargin < 0 ? '-' : '+'}Rs {Math.round(Math.abs(cartMargins.total.totalMargin)).toLocaleString()}</strong>
+          </div>
         </div>
       )}
 
@@ -528,10 +567,11 @@ const POS: React.FC<POSProps> = ({ user }) => {
           </div>
 
           <div className="pos-cart-list">
-            {cart.map((item) => (
+            {cart.map((item, index) => (
               <CartItemRow
                 key={item.id}
                 item={item}
+                margin={cartMargins.lines[index]}
                 onPriceChange={updateCartPrice}
                 onCategoryChange={updateAdjustmentCategory}
                 onReasonChange={updateAdjustmentReason}

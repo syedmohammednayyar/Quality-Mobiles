@@ -3,6 +3,8 @@ import { User } from '../types';
 import { getSaleDetail, listSales, listStores, type ApiSale, type ApiSaleDetail, type ApiStore } from '../services/api';
 import DateField from '../components/DateField';
 import { formatDateTime } from '../utils/dateFormat';
+import { calculateMargin } from '../utils/margin';
+import { MarginAmount, MarginBadge, MarginSummaryPanel } from '../components/MarginBadge';
 import './Sales.css';
 
 const money = (value: number | string) => `Rs ${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -128,10 +130,20 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
 
       <section className="sales-table-wrap">
         <table className="sales-table-modern">
-          <thead><tr><th>Sale ID</th><th>Job Number</th><th>Product</th><th>IMEI</th><th>Customer</th><th>Store</th><th>Employee</th><th>Price Breakdown</th><th>Payment</th><th>Sale Date</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Sale ID</th><th>Job Number</th><th>Product</th><th>IMEI</th><th>Customer</th><th>Store</th><th>Employee</th><th>Price Breakdown</th><th>Margin</th><th>Payment</th><th>Sale Date</th><th>Status</th><th></th></tr></thead>
           <tbody>
-            {filteredRows.map(({ key, sale, item }) => (
-              <tr key={key}>
+            {filteredRows.map(({ key, sale, item }) => {
+              // Historical snapshot only — never recalculated from today's
+              // prices. Sales predating Loss Management carry no snapshot.
+              const hasSnapshot = item.cost_basis !== undefined && Number(item.cost_basis) > 0;
+              const itemMargin = hasSnapshot
+                ? calculateMargin({
+                    purchasePrice: item.cost_basis,
+                    sellingPrice: item.effective_selling_amount ?? item.line_total,
+                  })
+                : null;
+              return (
+              <tr key={key} className={item.is_loss ? 'row-loss' : undefined}>
                 <td><strong>{sale.sale_no || sale.id}</strong></td>
                 <td>{item.job_no || sale.job_no || '-'}</td>
                 <td><strong>{item.product_name || '-'}</strong><span>{item.brand || ''}</span></td>
@@ -145,17 +157,21 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                   <span className="sales-list-price">Other adj.: −Rs {Number(sale.price_adjustment_total || 0).toLocaleString()}</span>
                   <span className="sales-list-price">Final: Rs {Number(sale.total_amount || item.line_total || item.unit_price || 0).toLocaleString()}</span>
                 </td>
+                <td>{itemMargin
+                  ? <><MarginAmount result={itemMargin} /> <MarginBadge result={itemMargin} compact /></>
+                  : <span className="margin-value margin-unknown">N/A</span>}</td>
                 <td>{sale.payment_method || '-'}</td>
                 <td>{formatDateTime(sale.sold_at)}</td>
                 <td><span className={`sales-status ${sale.payment_status || 'pending'}`}>{sale.payment_status || sale.sale_status || 'completed'}</span></td>
                 <td><button type="button" className="sales-view-btn" onClick={() => setViewSaleId(sale.id)}>View</button></td>
               </tr>
-            ))}
-            {!loading && filteredRows.length === 0 && <tr><td colSpan={12} className="sales-empty">
+              );
+            })}
+            {!loading && filteredRows.length === 0 && <tr><td colSpan={13} className="sales-empty">
               <strong>No sales found</strong>
               <span>No completed sales match the selected filters. Try changing the date range, store or search.</span>
             </td></tr>}
-            {loading && <tr><td colSpan={12} className="sales-empty">Loading sales...</td></tr>}
+            {loading && <tr><td colSpan={13} className="sales-empty">Loading sales...</td></tr>}
           </tbody>
         </table>
       </section>
@@ -186,6 +202,22 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                   {viewDetail.ic_number && <><dt>IC Number</dt><dd>{viewDetail.ic_number}</dd></>}
                   {viewDetail.gift && <><dt>Gift</dt><dd>{viewDetail.gift}</dd></>}
                 </dl>
+
+                {/* Transaction-level margin. A bill carrying one below-cost item
+                    can still clear overall, so the sale is judged on its total
+                    while each item keeps its own verdict below. */}
+                {(() => {
+                  const priced = viewDetail.items.filter((item) => Number(item.cost_basis) > 0);
+                  if (priced.length === 0) return null;
+                  const totalCost = priced.reduce((sum, item) => sum + Number(item.cost_basis), 0);
+                  const totalEffective = priced.reduce((sum, item) => sum + Number(item.effective_selling_amount || item.line_total), 0);
+                  const result = calculateMargin({ purchasePrice: totalCost, sellingPrice: totalEffective });
+                  const lossItems = viewDetail.items.filter((item) => item.is_loss).length;
+                  return <>
+                    <h3>Transaction Margin</h3>
+                    <MarginSummaryPanel result={result} title={`${priced.length} priced item${priced.length > 1 ? 's' : ''}${lossItems > 0 ? ` — ${lossItems} sold below cost` : ''}`} />
+                  </>;
+                })()}
 
                 <h3>Items</h3>
                 <div className="sales-drawer-items">
