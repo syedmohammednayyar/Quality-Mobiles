@@ -877,16 +877,32 @@ function mapBackendRole(roles: string[]): AuthUser["role"] {
   return "Employee";
 }
 
+export type DashboardRangeKey = "today" | "week" | "month" | "year" | "custom";
+
+export interface DashboardFilters {
+  /** "ALL" for the consolidated view, otherwise a real Store id. */
+  storeId: string;
+  range: DashboardRangeKey;
+  fromDate?: string;
+  toDate?: string;
+}
+
 export interface DashboardSummary {
+  /** Echo of the scope the server actually applied — used to reject stale responses. */
+  scope: { storeId: string; storeName: string; isAllStores: boolean; rangeKey: DashboardRangeKey; rangeLabel: string; from: string; to: string };
   kpis: Record<string, number>;
-  salesOverview: Record<"today" | "week" | "month", { sales: number; revenue: number; productsSold: number }>;
+  salesOverview: Record<"period" | "today" | "week" | "month", { sales: number; revenue: number; productsSold: number }>;
   inventory: { newPhones: number; usedPhones: number; lowStock: number; recentlyAdded: number; recentlyTransferred: number };
-  storePerformance: Array<{ store: string; revenue: number; sales: number; inventoryValue: number; lossAmount?: number }>;
-  recentSales: Array<{ id: string; jobNumber: string; product: string; customer: string; store: string; amount: number; time: string }>;
+  salesTrend: Array<{ date: string; label: string; sales: number; revenue: number; grossRevenue: number }>;
+  topProducts: Array<{ productId: string; name: string; brand: string; category: string; quantity: number; revenue: number }>;
+  revenueBreakdown: Array<{ key: string; label: string; amount: number; percent: number }>;
+  inventoryAlerts: Array<{ id: string; product: string; sku: string; brand: string; store: string; quantity: number; minStockLevel: number; severity: "low_stock" | "out_of_stock" }>;
+  storePerformance: Array<{ storeId: string; store: string; revenue: number; sales: number; inventoryValue: number; lossAmount?: number }>;
+  recentSales: Array<{ id: string; jobNumber: string; product: string; customer: string; store: string; salesman: string; amount: number; status: string; time: string }>;
   activity: Array<{ activity: string; detail: string; user: string; time: string }>;
   alerts: Array<{ type: string; count: number; action: string }>;
   // ── Loss Management ──────────────────────────────────────────────────────
-  lossOverview?: Record<"today" | "week" | "month", { totalLoss: number; itemCount: number; transactionCount: number; averageLoss: number }>;
+  lossOverview?: Record<"period" | "today" | "week" | "month", { totalLoss: number; itemCount: number; transactionCount: number; averageLoss: number }>;
   lossByStore?: Array<{ storeId: string; storeName: string; lossAmount: number }>;
   recentLosses?: Array<{ id: string; saleNo: string; product: string; imei: string; store: string; employee: string; costBasis: number; soldAmount: number; lossAmount: number; reason: string; time: string }>;
 }
@@ -2558,8 +2574,22 @@ export async function getAdminReportOverview(params: AdminOverviewFilters): Prom
   return res.data;
 }
 
-export async function getDashboardSummary(): Promise<DashboardSummary> {
-  return apiRequest<DashboardSummary>("/dashboard/summary");
+/**
+ * Store + date scoped dashboard payload. The selected store is part of the
+ * request, not a post-fetch filter, so switching stores always re-queries the
+ * backend. Pass `signal` so a superseded request is cancelled rather than
+ * allowed to land on top of a newer selection.
+ */
+export async function getDashboardSummary(
+  filters: DashboardFilters,
+  signal?: AbortSignal,
+): Promise<DashboardSummary> {
+  const query = new URLSearchParams({ storeId: filters.storeId || "ALL", range: filters.range });
+  if (filters.range === "custom") {
+    if (filters.fromDate) query.set("fromDate", filters.fromDate);
+    if (filters.toDate) query.set("toDate", filters.toDate);
+  }
+  return apiRequest<DashboardSummary>(`/dashboard/summary?${query.toString()}`, { signal });
 }
 
 // ─── Loss Management ────────────────────────────────────────────────────────

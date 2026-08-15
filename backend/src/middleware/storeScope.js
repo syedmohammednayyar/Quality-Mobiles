@@ -15,12 +15,20 @@ function getRequestedStoreId(req) {
   );
 }
 
+// "ALL" is the consolidated multi-store view, not a row in the stores
+// collection — it carries no store scope and must never reach a `_id` lookup.
+const ALL_STORES = "ALL";
+
 export async function resolveStoreContext(req, _res, next) {
   try {
     if (!req.auth) return next();
 
     const requested = getRequestedStoreId(req);
-    if (!requested) return next();
+    if (!requested || String(requested).toUpperCase() === ALL_STORES) return next();
+
+    if (!mongoose.Types.ObjectId.isValid(String(requested))) {
+      throw new HttpError(400, "Invalid store selection", "STORE_INVALID_ID");
+    }
 
     const store = await Store.findOne({ _id: requested, isActive: true });
     if (!store || !FIXED_STORE_CODES.includes(store.code)) {

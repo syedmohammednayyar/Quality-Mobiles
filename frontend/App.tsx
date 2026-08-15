@@ -13,9 +13,8 @@ import Employees from './views/Employees';
 import Reports from './views/Reports';
 import LossManagement from './views/LossManagement';
 import { ApiStore, clearAuthToken, clearSessionUser, getAuthToken, getCurrentUser, getSessionUser, listStores, logout as apiLogout, logoutAllDevices, refreshSession, setSessionUser } from './services/api';
+import { StoreSelectionProvider } from './context/StoreSelectionContext';
 import './App.css';
-
-const STORE_KEY = 'quality-mobiles-current-store';
 
 const App: React.FC = () => {
   // Desktop: sidebar starts visible (open). Mobile/tablet: sidebar starts as a
@@ -23,13 +22,6 @@ const App: React.FC = () => {
   // (App.css/Sidebar.css) decides *how* "open"/"closed" looks per breakpoint.
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth > 1024);
   const [user, setUser] = useState<User | null>(() => getSessionUser() as User | null);
-  const [currentStore, setCurrentStore] = useState<ApiStore | { id: string, name: string }>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(STORE_KEY) || '') || { id: 'all', name: 'All Stores' };
-    } catch {
-      return { id: 'all', name: 'All Stores' };
-    }
-  });
   const [stores, setStores] = useState<ApiStore[]>([]);
   const refreshStores = async () => {
     try {
@@ -134,11 +126,6 @@ const App: React.FC = () => {
     setUser(null);
   };
 
-  const handleStoreChange = (store: ApiStore | { id: string, name: string }) => {
-    setCurrentStore(store);
-    localStorage.setItem(STORE_KEY, JSON.stringify(store));
-  };
-
   const handleLogoutAll = async () => {
     try {
       await logoutAllDevices();
@@ -163,6 +150,7 @@ const App: React.FC = () => {
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       ) : (
+        <StoreSelectionProvider user={user} stores={stores}>
         <div className={`app-shell${isSidebarOpen ? '' : ' sidebar-collapsed'}`}>
           <Sidebar
             isOpen={isSidebarOpen}
@@ -175,9 +163,7 @@ const App: React.FC = () => {
             <Header
               onMenuClick={() => setIsSidebarOpen(!isSidebarOpen)}
               user={user}
-              currentStore={currentStore}
-              stores={stores}
-              onStoreChange={handleStoreChange}
+              onStoresUpdate={refreshStores}
               onLogout={handleLogout}
               onLogoutAll={handleLogoutAll}
             />
@@ -203,6 +189,7 @@ const App: React.FC = () => {
             </main>
           </div>
         </div>
+        </StoreSelectionProvider>
       )}
     </Router>
   );

@@ -10,10 +10,14 @@ declare module 'react' {
 	export function useDeferredValue<T>(value: T): T;
 	export function useRef<T>(initialValue: T): { current: T };
 	export function useCallback<T extends (...args: any[]) => any>(callback: T, deps: readonly unknown[]): T;
+	export function createContext<T>(defaultValue: T): any;
+	export function useContext<T>(context: any): T;
 	export const Fragment: any;
 	const React: {
 		FC: FC<any>;
 		Fragment: any;
+		createContext: typeof createContext;
+		useContext: typeof useContext;
 	};
 	export default React;
 }

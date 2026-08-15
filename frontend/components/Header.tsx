@@ -1,16 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Store, User } from '../types';
+import { User } from '../types';
 import { updateStore, type ApiStore } from '../services/api';
+import { ALL_STORES, useStoreSelection } from '../context/StoreSelectionContext';
 import LogoShield from './LogoShield';
 import './Header.css';
 
 interface HeaderProps {
   onMenuClick: () => void;
   user: User;
-  currentStore?: Store | ApiStore;
-  stores?: ApiStore[];
-  onStoreChange?: (store: ApiStore | { id: string, name: string }) => void;
+  onStoresUpdate?: () => void | Promise<void>;
   onLogout: () => void;
   onLogoutAll: () => void;
 }
@@ -18,13 +16,13 @@ interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({
   onMenuClick,
   user,
-  currentStore,
-  stores = [],
-  onStoreChange,
+  onStoresUpdate,
   onLogout,
   onLogoutAll,
 }) => {
-  const [searchParams, setSearchParams] = useSearchParams();
+  // The store switcher writes straight into the shared selection, which is what
+  // every store-aware screen reads and sends to the API.
+  const { selectedStoreId, selectedStoreName, stores, canSwitchStore, selectStore } = useStoreSelection();
   const [showStoreMenu, setShowStoreMenu] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -45,18 +43,6 @@ const Header: React.FC<HeaderProps> = ({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  useEffect(() => {
-    if (user.role === 'Admin') return;
-    const assigned = stores.find((store) => String(store.id) === String(user.assignedStoreId));
-    if (!assigned) return;
-    const current = searchParams.get('store');
-    if (current !== assigned.name) {
-      const params = new URLSearchParams(searchParams);
-      params.set('store', assigned.name);
-      setSearchParams(params, { replace: true });
-    }
-  }, [searchParams, setSearchParams, stores, user.assignedStoreId, user.role]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -80,31 +66,26 @@ const Header: React.FC<HeaderProps> = ({
     setIsDarkMode(!isDarkMode);
   };
 
-  const selectedStoreName = searchParams.get('store') || currentStore?.name || 'All Stores';
-  const canSwitchStore = user.role === 'Admin';
+  const isAllStores = selectedStoreId === ALL_STORES;
   const assignedStoreName = stores.find((store) => String(store.id) === String(user.assignedStoreId))?.name
-    || currentStore?.name
+    || selectedStoreName
     || 'Assigned Store';
 
-  const selectStore = (store: ApiStore | { id: string, name: string }) => {
-    const params = new URLSearchParams(searchParams);
-    if (store.name === 'All Stores') params.delete('store');
-    else params.set('store', store.name);
-    setSearchParams(params, { replace: true });
-    onStoreChange?.(store);
+  const chooseStore = (store: ApiStore | { id: string, name: string }) => {
+    selectStore({ id: String(store.id), name: store.name });
     setShowStoreMenu(false);
   };
 
   const openRenameModal = () => {
-    if (!currentStore || !canSwitchStore) return;
-    setRenameValue(currentStore.name || '');
+    if (isAllStores || !canSwitchStore) return;
+    setRenameValue(selectedStoreName);
     setRenameError('');
     setShowRenameModal(true);
     setShowStoreMenu(false);
   };
 
   const saveRename = async () => {
-    if (!currentStore || !canSwitchStore) return;
+    if (isAllStores || !canSwitchStore) return;
     const nextName = renameValue.trim();
     if (!nextName) {
       setRenameError('Store name is required.');
@@ -114,11 +95,9 @@ const Header: React.FC<HeaderProps> = ({
     try {
       setIsRenaming(true);
       setRenameError('');
-      const updated = await updateStore(String(currentStore.id), { name: nextName });
-      onStoreChange?.(updated);
-      const params = new URLSearchParams(searchParams);
-      params.set('store', updated.name);
-      setSearchParams(params, { replace: true });
+      const updated = await updateStore(selectedStoreId, { name: nextName });
+      selectStore({ id: String(updated.id), name: updated.name });
+      await onStoresUpdate?.();
       setShowRenameModal(false);
       setShowStoreMenu(false);
     } catch (error) {
@@ -163,15 +142,15 @@ const Header: React.FC<HeaderProps> = ({
 
             {canSwitchStore && showStoreMenu && (
               <div className="dropdown-menu store-menu">
-                {currentStore && currentStore.name !== 'All Stores' && (
+                {!isAllStores && (
                   <button className="dropdown-item" onClick={openRenameModal}>
                     <span className="store-icon">R</span>
                     <span>Rename current store</span>
                   </button>
                 )}
                 <button
-                  className={`dropdown-item ${selectedStoreName === 'All Stores' ? 'active' : ''}`}
-                  onClick={() => selectStore({ id: 'all', name: 'All Stores' })}
+                  className={`dropdown-item ${isAllStores ? 'active' : ''}`}
+                  onClick={() => chooseStore({ id: ALL_STORES, name: 'All Stores' })}
                 >
                   <span className="store-icon">A</span>
                   <span>All Stores</span>
@@ -179,8 +158,8 @@ const Header: React.FC<HeaderProps> = ({
                 {stores.map((store) => (
                   <button
                     key={store.id}
-                    className={`dropdown-item ${selectedStoreName === store.name ? 'active' : ''}`}
-                    onClick={() => selectStore(store)}
+                    className={`dropdown-item ${selectedStoreId === String(store.id) ? 'active' : ''}`}
+                    onClick={() => chooseStore(store)}
                   >
                     <span className="store-icon">{store.store_type === 'main' ? 'M' : 'S'}</span>
                     <span>{store.name}</span>
@@ -190,13 +169,13 @@ const Header: React.FC<HeaderProps> = ({
             )}
           </div>
 
-          {showRenameModal && currentStore && canSwitchStore && (
+          {showRenameModal && !isAllStores && canSwitchStore && (
             <div style={{ position: 'fixed', inset: 0, zIndex: 'var(--z-modal)', background: 'rgba(9, 12, 18, 0.52)', display: 'grid', placeItems: 'center', padding: 16 }}>
               <div style={{ width: 'min(460px, 100%)', borderRadius: 20, background: 'var(--bg-primary)', border: '1px solid var(--border-color)', boxShadow: '0 30px 80px rgba(0,0,0,0.28)', overflow: 'hidden' }}>
                 <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
                   <div>
                     <h2>Rename Store</h2>
-                    <p>Rename {currentStore.name} for all users and reports.</p>
+                    <p>Rename {selectedStoreName} for all users and reports.</p>
                   </div>
                   <button onClick={() => setShowRenameModal(false)}>x</button>
                 </div>
