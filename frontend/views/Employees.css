@@ -13,3 +13,8 @@
 .store-card label>span{color:var(--text-secondary);font-size:10px;font-weight:850;text-transform:uppercase}
 .store-card input{min-height:42px;padding:8px 10px;border:1px solid var(--border-color);border-radius:7px;background:var(--bg-primary);color:var(--text-primary);font:inherit;font-weight:700}
 .store-card-actions{display:flex;justify-content:flex-end;gap:7px}
+
+/* Read-only store scope shown to a Manager in place of the store filter —
+   their reach is fixed to their assignment, so there is nothing to pick. */
+.users-store-scope{display:inline-flex;align-items:center;gap:6px;min-height:42px;padding:0 12px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);color:var(--text-secondary);font-weight:700;white-space:nowrap}
+.users-store-scope .material-icons{font-size:17px;color:var(--text-tertiary)}

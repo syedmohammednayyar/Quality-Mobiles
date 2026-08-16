@@ -87,6 +87,16 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate
     [stores, isAdmin, managedStoreIds],
   );
 
+  // Only an Admin manages users across the business. A Manager's reach is the
+  // store(s) assigned to them — the API already scopes the rows — so they are
+  // never offered a consolidated "All Stores" view that implies otherwise.
+  const canViewAllStores = isAdmin;
+
+  useEffect(() => {
+    if (canViewAllStores || visibleStores.length === 0) return;
+    setStoreFilter((prev) => (visibleStores.some((store) => store.id === prev) ? prev : visibleStores[0].id));
+  }, [canViewAllStores, visibleStores]);
+
   // ── Store master (Admin only) ────────────────────────────────────────────
   // Renaming only changes the display name. The store's permanent ID/code is
   // never touched, so every existing sale, buyback, employee and inventory
@@ -211,7 +221,7 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate
       <header className="module-header users-header">
         <div>
           <h1>User Management</h1>
-          <p>Manage staff accounts, roles and store assignments &middot; {employees.length} users</p>
+          <p>{isAdmin ? 'Manage staff accounts, roles and store assignments' : 'Manage staff accounts for your assigned store'} &middot; {employees.length} users</p>
         </div>
         <button className="btn btn-primary" type="button" onClick={openCreate}>
           <span className="material-icons">person_add</span> Add User
@@ -228,10 +238,23 @@ const Employees: React.FC<EmployeesProps> = ({ user, stores = [], onStoresUpdate
           <option value="Manager">Manager</option>
           <option value="Employee">Employee</option>
         </select>
-        <select value={storeFilter} onChange={(event) => setStoreFilter(event.target.value)}>
-          <option value="All">All Stores</option>
-          {visibleStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
-        </select>
+        {canViewAllStores ? (
+          <select value={storeFilter} onChange={(event) => setStoreFilter(event.target.value)}>
+            <option value="All">All Stores</option>
+            {visibleStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+          </select>
+        ) : visibleStores.length > 1 ? (
+          // A manager assigned to more than one store may switch between them,
+          // but still has no "all" option beyond their own assignments.
+          <select value={storeFilter} onChange={(event) => setStoreFilter(event.target.value)}>
+            {visibleStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+          </select>
+        ) : (
+          <span className="users-store-scope" title="You can only manage users in your assigned store">
+            <span className="material-icons">store</span>
+            {visibleStores[0]?.name || 'Assigned store'}
+          </span>
+        )}
         <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
           <option value="All">All Statuses</option>
           <option value="Active">Active</option>
