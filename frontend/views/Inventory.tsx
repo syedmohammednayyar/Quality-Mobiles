@@ -3,6 +3,7 @@ import { User } from '../types';
 import { formatDateTime } from '../utils/dateFormat';
 import { calculateMargin, type MarginStatus } from '../utils/margin';
 import { LossWarning, MarginAmount, MarginBadge, MarginPercent, MarginSummaryPanel } from '../components/MarginBadge';
+import { useStoreSelection } from '../context/StoreSelectionContext';
 import {
   createProduct,
   deleteProduct,
@@ -105,7 +106,27 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
     [activeStores, managerStoreId],
   );
 
-  const [selectedStoreId, setSelectedStoreId] = useState('');
+  // The store picker in the header is the single source of truth for what this
+  // page shows. "All Stores" is a real consolidated view here — every row is
+  // labelled with the store that actually holds it — rather than a silent
+  // fallback to whichever store happened to sort first.
+  const { selectedStoreId: headerStoreId, isAllStores } = useStoreSelection();
+  const viewStoreIds = useMemo(() => {
+    if (managerStoreId) return visibleStores.filter((store) => store.id === managerStoreId).map((store) => store.id);
+    if (isAllStores) return visibleStores.map((store) => store.id);
+    const match = visibleStores.find((store) => store.id === headerStoreId);
+    return match ? [match.id] : visibleStores.map((store) => store.id);
+  }, [headerStoreId, isAllStores, managerStoreId, visibleStores]);
+  const viewStoreKey = viewStoreIds.join(',');
+  const isConsolidatedView = viewStoreIds.length > 1;
+  const viewScopeLabel = isConsolidatedView
+    ? `All Stores · ${viewStoreIds.length} stores`
+    : visibleStores.find((store) => store.id === viewStoreIds[0])?.name || 'No store selected';
+
+  // New stock always lands in exactly one store, so the form keeps its own
+  // target: it follows the header while a single store is selected, and must
+  // be chosen explicitly while the consolidated view is open.
+  const [formStoreId, setFormStoreId] = useState('');
   const [rows, setRows] = useState<ApiStoreInventoryRow[]>([]);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -142,12 +163,21 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
   const pageSize = 25;
 
   useEffect(() => {
-    if (visibleStores.length > 0 && !selectedStoreId) setSelectedStoreId(visibleStores[0].id);
     if (visibleStores.length === 0) {
       setRows([]);
       setLoading(false);
     }
-  }, [visibleStores, selectedStoreId]);
+  }, [visibleStores]);
+
+  // Keep the add-to target aligned with what is on screen. In the consolidated
+  // view there is no single answer, so the admin is asked to pick one.
+  useEffect(() => {
+    if (isConsolidatedView) {
+      setFormStoreId((prev) => (visibleStores.some((store) => store.id === prev) ? prev : ''));
+      return;
+    }
+    setFormStoreId(viewStoreIds[0] || '');
+  }, [isConsolidatedView, viewStoreKey, visibleStores]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(search), 220);
@@ -164,12 +194,22 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
     };
   }, []);
 
-  const loadInventory = async (storeId: string, searchOverride = debouncedSearch) => {
+  // Each store is queried on its own — the API scopes /inventory to a single
+  // store — and the results are concatenated. Every row carries its own
+  // store_id/store_name, so a merged list stays attributable.
+  const loadInventory = async (storeIds: string[], searchOverride = debouncedSearch) => {
+    if (storeIds.length === 0) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       setError('');
-      const data = await listStoreInventory(storeId, { search: searchOverride, limit: 500, offset: 0 });
-      setRows(data);
+      const batches = await Promise.all(
+        storeIds.map((storeId) => listStoreInventory(storeId, { search: searchOverride, limit: 500, offset: 0 })),
+      );
+      setRows(batches.flat());
     } catch (err) {
       setRows([]);
       setError(err instanceof Error ? err.message : 'Failed to load inventory');
@@ -179,11 +219,12 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
   };
 
   useEffect(() => {
-    if (selectedStoreId) {
-      setForm((prev) => ({ ...prev, primary_store_ref: selectedStoreId }));
-      void loadInventory(selectedStoreId);
-    }
-  }, [selectedStoreId, debouncedSearch, inventoryRefreshKey]);
+    void loadInventory(viewStoreIds);
+  }, [viewStoreKey, debouncedSearch, inventoryRefreshKey]);
+
+  useEffect(() => {
+    setForm((prev) => ({ ...prev, primary_store_ref: formStoreId || null }));
+  }, [formStoreId]);
 
   const rememberedDefaults = useMemo(() => ({
     brand: form.brand,
@@ -231,7 +272,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
   const pagedRows = filteredRows.slice((page - 1) * pageSize, page * pageSize);
 
-  useEffect(() => setPage(1), [debouncedSearch, selectedStoreId, sortKey, sortDir]);
+  useEffect(() => setPage(1), [debouncedSearch, viewStoreKey, sortKey, sortDir]);
 
   const summary = useMemo(() => {
     const totalProducts = filteredRows.length;
@@ -246,7 +287,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
   const updateForm = (patch: Partial<ProductForm>) => setForm((prev) => ({ ...prev, ...patch }));
 
   const resetForNext = () => {
-    setForm(buildBlankForm(selectedStoreId, rememberedDefaults));
+    setForm(buildBlankForm(formStoreId, rememberedDefaults));
     window.setTimeout(() => modelRef.current?.focus(), 0);
   };
 
@@ -259,7 +300,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
     // so each entry always represents exactly one product.
     stock_quantity: 1,
     min_stock_level: 0,
-    primary_store_ref: selectedStoreId,
+    primary_store_ref: formStoreId,
     inventory_mode: 'bulk',
   });
 
@@ -268,14 +309,16 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
     setError('');
     setStatusMessage('');
     try {
+      if (!formStoreId) throw new Error('Select the store this product belongs to before saving.');
       if (!form.job_id?.trim()) throw new Error('Job Number is required.');
       if (rows.some((row) => row.job_id.toLowerCase() === form.job_id?.trim().toLowerCase())) throw new Error('Job Number already exists.');
       await createProduct(buildPayload(form));
-      setStatusMessage('Product added.');
+      const targetStore = visibleStores.find((store) => store.id === formStoreId)?.name;
+      setStatusMessage(targetStore ? `Product added to ${targetStore}.` : 'Product added.');
       setSearch('');
       setDebouncedSearch('');
       setPage(1);
-      await loadInventory(selectedStoreId, '');
+      await loadInventory(viewStoreIds, '');
       if (addNext) resetForNext();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save product');
@@ -322,7 +365,9 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
     if (!remarkText.trim()) { setError('A remark is required to save this change.'); return; }
     const { row, field } = pendingEdit;
     const payload: Partial<CreateProductPayload> = {
-      primary_store_ref: selectedStoreId,
+      // The row's own store, not the page scope — in the consolidated view the
+      // edited product may belong to a store other than the add-to target.
+      primary_store_ref: row.store_id,
       sku: row.sku,
       name: row.name,
       remark: remarkText.trim(),
@@ -342,7 +387,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
       setStatusMessage('Change saved and recorded in the audit history.');
       setPendingEdit(null);
       setRemarkText('');
-      await loadInventory(selectedStoreId);
+      await loadInventory(viewStoreIds);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save change');
     }
@@ -417,7 +462,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
       window.dispatchEvent(new CustomEvent('inventory:changed', {
         detail: { storeIds: [transferRow.store_id, transferStoreId], productId: transferRow.product_id },
       }));
-      await loadInventory(selectedStoreId, '');
+      await loadInventory(viewStoreIds, '');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to transfer product');
     } finally {
@@ -430,7 +475,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
     try {
       await deleteProduct(row.product_id);
       setStatusMessage('Product removed from active inventory.');
-      await loadInventory(selectedStoreId);
+      await loadInventory(viewStoreIds);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete product');
     }
@@ -446,12 +491,19 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
             <h1>Inventory</h1>
             <p>Manage stock levels, pricing, transfers and product audit history.</p>
           </div>
+          <span className="inventory-scope-chip" title="Set by the store picker in the header">
+            <span className="material-icons">store</span>
+            {viewScopeLabel}
+          </span>
         </div>
 
         <form className="inventory-fast-form" onSubmit={(event) => { event.preventDefault(); void saveProduct(true); }}>
           <label>
-            <span>Store</span>
-            <select value={selectedStoreId} onChange={(event) => setSelectedStoreId(event.target.value)} disabled={isManager}>
+            <span>Store{isConsolidatedView ? ' (required)' : ''}</span>
+            {/* Locked to the store on screen unless every store is shown at
+                once, where the admin must say where the stock is landing. */}
+            <select value={formStoreId} onChange={(event) => setFormStoreId(event.target.value)} disabled={isManager || !isConsolidatedView}>
+              {isConsolidatedView && <option value="">Select store</option>}
               {visibleStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
             </select>
           </label>
@@ -522,10 +574,14 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
             </select>
           </label>
           <div className="inventory-form-actions">
-            <span className="inventory-form-context">Adding to <strong>{visibleStores.find((s) => s.id === selectedStoreId)?.name || 'selected store'}</strong></span>
+            <span className={`inventory-form-context${formStoreId ? '' : ' unset'}`}>
+              {formStoreId
+                ? <>Adding to <strong>{visibleStores.find((s) => s.id === formStoreId)?.name}</strong></>
+                : <>Select a store above — inventory is always recorded against one store</>}
+            </span>
             <button type="button" className="btn btn-secondary" onClick={resetForNext}>Clear</button>
-            <button type="button" className="btn btn-secondary" disabled={saving} onClick={() => void saveProduct(false)}>{saving ? 'Saving...' : 'Save'}</button>
-            <button className="btn btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Save & Add Next'}</button>
+            <button type="button" className="btn btn-secondary" disabled={saving || !formStoreId} onClick={() => void saveProduct(false)}>{saving ? 'Saving...' : 'Save'}</button>
+            <button className="btn btn-primary" disabled={saving || !formStoreId}>{saving ? 'Saving...' : 'Save & Add Next'}</button>
           </div>
         </form>
       </section>
@@ -552,6 +608,12 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
       </section>
 
       <section className="inventory-table-panel">
+        <div className="inventory-scope-bar">
+          <span>Showing inventory for <strong>{viewScopeLabel}</strong></span>
+          {isConsolidatedView
+            ? <em>Use the store picker in the header to narrow this to one store.</em>
+            : <em>Every record below is held by this store.</em>}
+        </div>
         <div className="inventory-table-tools">
           <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search job, product code, SKU, IMEI, brand, model..." />
           <div className="inventory-sort-controls">
@@ -645,7 +707,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
                   brandFilter !== 'all' && brandFilter,
                   statusFilter !== 'all' && statusFilter.replace(/_/g, ' '),
                   marginFilter !== 'all' && `${marginFilter.replace(/_/g, '-').toLowerCase()} margin`,
-                  visibleStores.find((s) => s.id === selectedStoreId)?.name,
+                  viewScopeLabel,
                 ].filter(Boolean).join(' · ') || 'the current filters'}. Try changing the search, brand or status filter.</span>
               </td></tr>}
               {loading && <tr><td colSpan={10} className="inventory-empty">Loading inventory...</td></tr>}

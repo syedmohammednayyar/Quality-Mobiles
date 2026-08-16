@@ -428,6 +428,55 @@
   color: var(--text-primary);
 }
 
+.inventory-form-context.unset {
+  color: var(--color-warning-600, var(--status-warning-text));
+}
+
+/* Store context: which store the page is showing, and which one new stock
+   will be written to. Both read off the header's store picker. */
+.inventory-scope-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.inventory-scope-chip .material-icons {
+  font-size: 16px;
+  color: var(--text-tertiary);
+}
+
+.inventory-scope-bar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.inventory-scope-bar strong {
+  color: var(--text-primary);
+}
+
+.inventory-scope-bar em {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 650;
+}
+
 .inventory-detail-backdrop {
   position: fixed;
   inset: 0;
