@@ -3,16 +3,15 @@ import { BulkInventory, Product, SerializedInventory, StockLedger, Store, StoreI
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
 import { assertObjectId, toObjectId } from "../../utils/ids.js";
+import { classifyStockStatus } from "./activeStock.js";
 
 function toMoney(value) {
   return Number(value || 0).toFixed(2);
 }
 
-function buildStatus(quantity, minStockLevel) {
-  if (quantity <= 0) return "out_of_stock";
-  if (quantity <= minStockLevel) return "low_stock";
-  return "in_stock";
-}
+// Delegates to the shared definition so this screen and the dashboard cannot
+// drift apart again — this rule was always correct; the dashboard's was not.
+const buildStatus = (quantity, minStockLevel) => classifyStockStatus(quantity, minStockLevel);
 
 function mapInventoryItem(store, item, updatedAt) {
   const product = item.product;

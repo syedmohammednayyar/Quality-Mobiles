@@ -491,9 +491,25 @@ export async function updateProduct(productId, input) {
       await requireStore(targetStore);
 
       if (input.stockQuantity !== undefined || input.inventoryStatus !== undefined) {
-        const nextQuantity = input.stockQuantity !== undefined
-          ? Number(input.stockQuantity)
-          : input.inventoryStatus === "sold" ? 0 : 1;
+        // Marking sold always empties the row — that is what keeps
+        // Product.inventoryStatus and BulkInventory.quantity from disagreeing,
+        // which is what let sold stock show up as available.
+        //
+        // Coming back off "sold" restores one unit, but only when the row is
+        // actually empty: a product that still holds real bulk stock must not
+        // be silently reset to 1 just because its status was edited.
+        let nextQuantity;
+        if (input.stockQuantity !== undefined) {
+          nextQuantity = Number(input.stockQuantity);
+        } else if (input.inventoryStatus === "sold") {
+          nextQuantity = 0;
+        } else {
+          const existing = await BulkInventory.findOne({
+            store: toObjectId(targetStore, "STORE_INVALID_ID"),
+            product: product._id,
+          }).session(session).lean();
+          nextQuantity = Number(existing?.quantity || 0) > 0 ? Number(existing.quantity) : 1;
+        }
         await upsertBulkInventory(
           session,
           toObjectId(targetStore, "STORE_INVALID_ID"),

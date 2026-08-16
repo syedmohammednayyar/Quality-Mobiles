@@ -4,6 +4,15 @@ import {
   Product, Sale, SerializedInventory, StockLedger, Store,
 } from "../../db/models.js";
 import { formatDate, formatDateRange, formatDayMonth, formatMonthYear, parseCalendarDate } from "../../utils/dateFormat.js";
+import {
+  activeBulkByCategoryPipeline,
+  activeBulkQuantityPipeline,
+  activeSerializedMatch,
+  classifyStockStatus,
+  lowStockCountPipeline,
+  lowStockStages,
+  outOfStockCountPipeline,
+} from "../inventory/activeStock.js";
 
 const oid   = (value) => new mongoose.Types.ObjectId(value);
 const money = (value) => Number(value || 0);
@@ -255,23 +264,27 @@ async function revenueBreakdown(storeId, from, to, exchangeValue) {
 }
 
 // ─── Low-stock alerts for the selected store only ─────────────────────────────
+// Uses the shared low-stock stages so the list can never disagree with the
+// lowStockProducts KPI above it. Sold and sold-out rows are excluded at the
+// database, not filtered out afterwards.
 async function inventoryAlerts(storeId, limit = 10) {
-  const rows = await BulkInventory.find({ ...storeMatch(storeId), $expr: { $lte: ["$quantity", "$minStockLevel"] } })
-    .populate("product", "name sku brand category")
-    .populate("store", "name")
-    .sort({ quantity: 1 })
-    .limit(limit)
-    .lean();
+  const rows = await BulkInventory.aggregate([
+    ...lowStockStages(storeId),
+    { $sort: { quantity: 1 } },
+    { $limit: limit },
+    { $lookup: { from: "stores", localField: "store", foreignField: "_id", as: "storeDoc" } },
+    { $unwind: { path: "$storeDoc", preserveNullAndEmptyArrays: true } },
+  ]);
 
   return rows.map((row) => ({
     id:            String(row._id),
-    product:       row.product?.name || "Unknown product",
-    sku:           row.product?.sku || "",
-    brand:         row.product?.brand || "",
-    store:         row.store?.name || "",
+    product:       row.productDoc?.name || "Unknown product",
+    sku:           row.productDoc?.sku || "",
+    brand:         row.productDoc?.brand || "",
+    store:         row.storeDoc?.name || "",
     quantity:      row.quantity || 0,
     minStockLevel: row.minStockLevel || 0,
-    severity:      (row.quantity || 0) === 0 ? "out_of_stock" : "low_stock",
+    severity:      classifyStockStatus(row.quantity, row.minStockLevel),
   }));
 }
 
@@ -321,15 +334,18 @@ export async function getDashboardSummary(options = {}) {
     exchangeSummary(from,           storeId, to),
     exchangeSummary(startOfMonth(), storeId, todayEnd),
     Customer.countDocuments(storeFilter),
-    SerializedInventory.countDocuments({ ...storeFilter, status: "in_stock" }),
+    // Devices available to sell right now. SerializedInventory.status is the
+    // authoritative per-device state, so a sold device is excluded here even
+    // if some other model still carries a stale row for it.
+    SerializedInventory.countDocuments(activeSerializedMatch(storeId)),
     SerializedInventory.aggregate([
-      { $match: { ...storeFilter, status: "in_stock" } },
+      { $match: activeSerializedMatch(storeId) },
       { $lookup: { from: "products", localField: "product", foreignField: "_id", as: "product" } },
       { $unwind: "$product" },
       { $match: { "product.category": "used_phone" } },
       { $count: "count" },
     ]),
-    BulkInventory.countDocuments({ ...storeFilter, $expr: { $lte: ["$quantity", "$minStockLevel"] } }),
+    BulkInventory.aggregate(lowStockCountPipeline(storeId)),
     StockLedger.countDocuments({ ...scopeMatch(storeId, from, to), referenceType: "stock_transfer", movementType: "transfer_out" }),
     Store.find(storeId ? { _id: oid(storeId), isActive: true } : { isActive: true }).lean(),
     Sale.find({ ...scopeMatch(storeId, from, to), status: "completed" }).populate("store customer items.product").sort({ createdAt: -1 }).limit(8).lean(),
@@ -353,10 +369,15 @@ export async function getDashboardSummary(options = {}) {
     inventoryAlerts(storeId),
   ]);
 
-  const [bulkAvailable, serializedNew, breakdown] = await Promise.all([
-    BulkInventory.aggregate([{ $match: storeFilter }, { $group: { _id: null, count: { $sum: "$quantity" } } }]),
+  const [bulkAvailable, bulkByCategory, bulkOutOfStock, serializedNew, breakdown] = await Promise.all([
+    // Units of bulk stock that are genuinely still on hand: quantity > 0 on a
+    // product that is active, not sold, and not serialized (a serialized
+    // device is counted once, above, from SerializedInventory).
+    BulkInventory.aggregate(activeBulkQuantityPipeline(storeId)),
+    BulkInventory.aggregate(activeBulkByCategoryPipeline(storeId)),
+    BulkInventory.aggregate(outOfStockCountPipeline(storeId)),
     SerializedInventory.aggregate([
-      { $match: { ...storeFilter, status: "in_stock" } },
+      { $match: activeSerializedMatch(storeId) },
       { $lookup: { from: "products", localField: "product", foreignField: "_id", as: "product" } },
       { $unwind: "$product" },
       { $match: { "product.category": { $ne: "used_phone" } } },
@@ -364,6 +385,18 @@ export async function getDashboardSummary(options = {}) {
     ]),
     revenueBreakdown(storeId, from, to, periodExchanges.totalValue),
   ]);
+
+  // The Inventory Status panel must add up against Available Inventory, so
+  // both halves of active stock feed it: serialized devices and bulk units.
+  const bulkUsedPhones = money(bulkByCategory.find((row) => row._id === "used_phone")?.quantity);
+  const bulkNewPhones  = bulkByCategory.reduce(
+    (sum, row) => sum + (row._id === "used_phone" ? 0 : money(row.quantity)),
+    0,
+  );
+  const activeBulkUnits   = money(bulkAvailable[0]?.quantity);
+  const lowStockCount     = money(bulkLow[0]?.count);
+  const outOfStockCount   = money(bulkOutOfStock[0]?.count);
+  const availableInventory = available + activeBulkUnits;
 
   // One entry per store in scope — a single entry when one branch is selected,
   // so the comparison chart can never imply it is showing every store.
@@ -428,10 +461,11 @@ export async function getDashboardSummary(options = {}) {
       monthExchangeValue:    monthExchanges.totalValue,
       monthExchangeCount:    monthExchanges.count,
       // Inventory (point-in-time, store filtered but not date filtered)
-      availableInventory: available + money(bulkAvailable[0]?.count),
+      availableInventory,
       buybackInventory:   money(buybackInventory[0]?.count),
       totalCustomers:     customers,
-      lowStockProducts:   bulkLow,
+      lowStockProducts:   lowStockCount,
+      outOfStockProducts: outOfStockCount,
       underRepairBuybacks: underRepairBuybacks,
       pendingPayments:    money(pendingPaymentsAgg[0]?.outstanding),
       pendingPaymentBills: pendingPaymentsAgg[0]?.count || 0,
@@ -480,9 +514,12 @@ export async function getDashboardSummary(options = {}) {
       exchangeMonth: monthExchanges,
     },
     inventory: {
-      newPhones:          money(serializedNew[0]?.count),
-      usedPhones:         money(buybackInventory[0]?.count),
-      lowStock:           bulkLow,
+      // Serialized devices plus bulk units, so newPhones + usedPhones equals
+      // availableInventory rather than describing a different population.
+      newPhones:          money(serializedNew[0]?.count) + bulkNewPhones,
+      usedPhones:         money(buybackInventory[0]?.count) + bulkUsedPhones,
+      lowStock:           lowStockCount,
+      outOfStock:         outOfStockCount,
       recentlyAdded:      ledger.filter((x) => x.movementType === "in").length,
       recentlyTransferred:ledger.filter((x) => x.movementType.startsWith("transfer")).length,
     },
@@ -501,7 +538,7 @@ export async function getDashboardSummary(options = {}) {
       time:        sale.createdAt,
     })),
     alerts: [
-      { type: "Low stock",               count: bulkLow,                                            action: "Review inventory" },
+      { type: "Low stock",               count: lowStockCount,                                      action: "Review inventory" },
       { type: "Transfers this period",   count: transfers,                                          action: "Review transfers" },
       { type: "Price adjustments",       count: periodAdjustments.reduce((s, r) => s + r.count, 0), action: "Review adjustments" },
     ].filter((x) => x.count > 0),

@@ -101,6 +101,20 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
     return () => controller.abort();
   }, [selectedStoreId, range, fromDate, toDate, reloadToken]);
 
+  // Inventory KPIs are point-in-time, so a sale or a stock edit made elsewhere
+  // in the app leaves this screen showing a number that is no longer true.
+  // Refetch from the server on those events rather than adjusting counts
+  // locally — the server owns the active-inventory rules.
+  useEffect(() => {
+    const refresh = () => setReloadToken((value) => value + 1);
+    window.addEventListener("sales:changed", refresh);
+    window.addEventListener("inventory:changed", refresh);
+    return () => {
+      window.removeEventListener("sales:changed", refresh);
+      window.removeEventListener("inventory:changed", refresh);
+    };
+  }, []);
+
   // Label the view from what the server actually scoped to, never from local
   // state alone, so the heading can never disagree with the numbers below it.
   const scopeName = summary?.scope?.storeName || selectedStoreName;

@@ -6,6 +6,7 @@ import {
   Sale, SerializedInventory, StockLedger, Store,
 } from "../../db/models.js";
 import { HttpError } from "../../utils/httpError.js";
+import { isLowStock } from "../inventory/activeStock.js";
 
 const money = (value) => Number(value || 0);
 const id    = (value) => String(value?._id || value || "");
@@ -323,7 +324,9 @@ export async function getAdminReportOverview(filters) {
       totalBuybacks:         buybacks.length,
       totalEmployees:        employees.filter((x) => x.isActive !== false).length,
       totalTransfers:        transferRows.length,
-      lowStockProducts:      bulk.filter((x) => money(x.quantity) <= money(x.minStockLevel)).length,
+      // Same rule as the dashboard and the inventory screen: a row with no
+      // units left is out of stock, never low stock.
+      lowStockProducts:      bulk.filter((x) => isLowStock(x.quantity, x.minStockLevel)).length,
       outstandingPayments,
       buybackCost,
       totalExpenses,

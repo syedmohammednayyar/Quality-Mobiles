@@ -900,7 +900,7 @@ export interface DashboardSummary {
   scope: { storeId: string; storeName: string; isAllStores: boolean; rangeKey: DashboardRangeKey; rangeLabel: string; from: string; to: string };
   kpis: Record<string, number>;
   salesOverview: Record<"period" | "today" | "week" | "month", { sales: number; revenue: number; productsSold: number }>;
-  inventory: { newPhones: number; usedPhones: number; lowStock: number; recentlyAdded: number; recentlyTransferred: number };
+  inventory: { newPhones: number; usedPhones: number; lowStock: number; outOfStock: number; recentlyAdded: number; recentlyTransferred: number };
   /** `label` is the compact axis tick (15/Aug); `fullLabel` is the full DD/Mon/YYYY. */
   salesTrend: Array<{ date: string; label: string; fullLabel: string; sales: number; revenue: number; grossRevenue: number }>;
   topProducts: Array<{ productId: string; name: string; brand: string; category: string; quantity: number; revenue: number }>;

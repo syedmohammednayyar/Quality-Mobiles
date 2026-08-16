@@ -382,6 +382,14 @@ export async function createSale(input) {
         if (serialRows.length !== item.quantity) throw new HttpError(409, "Concurrent serialized stock conflict detected", "SALE_STOCK_CONFLICT");
         await SerializedInventory.updateMany({ _id: { $in: serialRows.map((r) => r._id) } }, { $set: { status: "sold", updatedAt: new Date() } }, { session });
         await StoreInventory.findOneAndUpdate({ store: input.storeId, "items.product": item.product }, { $inc: { "items.$.quantity": -item.quantity }, $set: { updatedAt: new Date() } }, { session });
+        // A serialized product should not carry a bulk row, but an earlier
+        // status edit could have created one. Drain it in the same
+        // transaction so no model is left claiming the device is on hand.
+        await BulkInventory.updateOne(
+          { store: input.storeId, product: item.product, quantity: { $gt: 0 } },
+          { $set: { quantity: 0, updatedAt: new Date() } },
+          { session },
+        );
       } else {
         const updatedBulk = await BulkInventory.findOneAndUpdate(
           { store: input.storeId, product: item.product, quantity: { $gte: item.quantity } },
@@ -395,6 +403,14 @@ export async function createSale(input) {
             { session, returnDocument: "after" },
           );
           if (!updatedInv) throw new HttpError(409, "Concurrent stock update conflict or insufficient stock detected", "SALE_STOCK_CONFLICT");
+          // The legacy model carried the stock, so the bulk row was stale.
+          // Bring it down with it instead of leaving a quantity behind that
+          // would keep reporting the sold unit as available.
+          await BulkInventory.updateOne(
+            { store: input.storeId, product: item.product, quantity: { $gt: 0 } },
+            { $set: { quantity: 0, updatedAt: new Date() } },
+            { session },
+          );
         }
         await StoreInventory.findOneAndUpdate({ store: input.storeId, "items.product": item.product }, { $set: { "items.$.quantity": 0, updatedAt: new Date() } }, { session });
       }
@@ -633,7 +649,35 @@ export async function deleteSale(saleId, userId) {
 
     for (const item of sale.items) {
       if (item.product.category === "service") continue;
-      await BulkInventory.findOneAndUpdate({ store: sale.store, product: item.product._id }, { $set: { quantity: 1, reservedQuantity: 0, updatedAt: new Date() } }, { upsert: true, session });
+
+      // Reverse the deduction against whichever model actually holds the
+      // stock, mirroring the sale itself. Restoring the wrong model is how a
+      // reversed sale ends up with Product "ready" while the device stays
+      // invisible — or worse, counted twice.
+      if (item.product.inventoryMode === "serialized") {
+        // SerializedInventory is authoritative per device. Return exactly the
+        // number of devices this line removed, newest sale first.
+        const soldRows = await SerializedInventory.find({ store: sale.store, product: item.product._id, status: "sold" })
+          .sort({ updatedAt: -1 })
+          .limit(item.quantity)
+          .session(session);
+        if (soldRows.length > 0) {
+          await SerializedInventory.updateMany(
+            { _id: { $in: soldRows.map((row) => row._id) } },
+            { $set: { status: "in_stock", updatedAt: new Date() } },
+            { session },
+          );
+        }
+      } else {
+        // Give back what the sale took, rather than resetting the row to 1 —
+        // that would erase real bulk stock on a multi-unit product.
+        await BulkInventory.findOneAndUpdate(
+          { store: sale.store, product: item.product._id },
+          { $inc: { quantity: item.quantity }, $set: { reservedQuantity: 0, updatedAt: new Date() } },
+          { upsert: true, session },
+        );
+      }
+
       await StoreInventory.findOneAndUpdate({ store: new mongoose.Types.ObjectId(sale.store), "items.product": new mongoose.Types.ObjectId(item.product._id) }, { $inc: { "items.$.quantity": item.quantity }, $set: { updatedAt: new Date() } }, { session });
       await StockLedger.create([{ store: sale.store, product: item.product._id, movementType: "in", quantity: item.quantity, referenceType: "sale_reversal", referenceId: sale._id, note: `Sale ${sale.saleNo} deleted`, createdBy: userId }], { session });
       await Product.updateOne({ _id: item.product._id }, { $set: { inventoryStatus: "ready", updatedAt: new Date() } }, { session });
