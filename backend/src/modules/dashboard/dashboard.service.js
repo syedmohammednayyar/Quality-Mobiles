@@ -13,6 +13,7 @@ import {
   lowStockStages,
   outOfStockCountPipeline,
 } from "../inventory/activeStock.js";
+import { liveItemMatch, netOfRetrieved, revenueSaleMatch } from "../sales/saleStatus.js";
 
 const oid   = (value) => new mongoose.Types.ObjectId(value);
 const money = (value) => Number(value || 0);
@@ -78,17 +79,24 @@ export function resolveDateRange({ rangeKey = "today", fromDate, toDate } = {}) 
 
 // ─── Sale summary: returns gross + net + adjustment + exchange breakdown ──────
 async function saleSummary(from, storeId, to) {
+  // Fully retrieved sales are excluded by the status match; partially
+  // retrieved ones stay but are netted down by what came back, so a returned
+  // device never inflates revenue or the units-sold count.
   const rows = await Sale.aggregate([
-    { $match: { ...scopeMatch(storeId, from, to), status: "completed" } },
+    { $match: { ...scopeMatch(storeId, from, to), ...revenueSaleMatch } },
     {
       $group: {
         _id:              null,
         sales:            { $sum: 1 },
-        grossRevenue:     { $sum: "$originalAmount" },
-        netRevenue:       { $sum: "$grandTotal" },
+        grossRevenue:     { $sum: netOfRetrieved("originalAmount", "retrievedOriginalTotal") },
+        netRevenue:       { $sum: netOfRetrieved("grandTotal", "retrievedTotal") },
         priceAdjustments: { $sum: "$priceAdjustmentTotal" },
         exchangeTotal:    { $sum: "$exchangeTotal" },
-        productsSold:     { $sum: { $sum: "$items.quantity" } },
+        productsSold:     {
+          $sum: {
+            $max: [0, { $subtract: [{ $sum: "$items.quantity" }, { $ifNull: ["$retrievedQuantity", 0] }] }],
+          },
+        },
       },
     },
   ]);
@@ -162,13 +170,13 @@ async function salesTrend(storeId, from, to) {
   const timezone  = localTimezone();
 
   const rows = await Sale.aggregate([
-    { $match: { ...scopeMatch(storeId, from, to), status: "completed" } },
+    { $match: { ...scopeMatch(storeId, from, to), ...revenueSaleMatch } },
     {
       $group: {
         _id:          { $dateToString: { format, date: "$createdAt", timezone } },
         sales:        { $sum: 1 },
-        revenue:      { $sum: "$grandTotal" },
-        grossRevenue: { $sum: "$originalAmount" },
+        revenue:      { $sum: netOfRetrieved("grandTotal", "retrievedTotal") },
+        grossRevenue: { $sum: netOfRetrieved("originalAmount", "retrievedOriginalTotal") },
       },
     },
   ]);
@@ -205,8 +213,11 @@ async function salesTrend(storeId, from, to) {
 // ─── Top products sold in the period, for this store only ────────────────────
 async function topProducts(storeId, from, to, limit = 6) {
   const rows = await Sale.aggregate([
-    { $match: { ...scopeMatch(storeId, from, to), status: "completed" } },
+    { $match: { ...scopeMatch(storeId, from, to), ...revenueSaleMatch } },
     { $unwind: "$items" },
+    // Item-level totals drop retrieved lines outright rather than netting —
+    // a device that came back was not a top seller.
+    liveItemMatch,
     {
       $group: {
         _id:      "$items.product",
@@ -241,8 +252,9 @@ const CATEGORY_LABELS = {
 // ─── Revenue split by product category, plus exchange credit ─────────────────
 async function revenueBreakdown(storeId, from, to, exchangeValue) {
   const rows = await Sale.aggregate([
-    { $match: { ...scopeMatch(storeId, from, to), status: "completed" } },
+    { $match: { ...scopeMatch(storeId, from, to), ...revenueSaleMatch } },
     { $unwind: "$items" },
+    liveItemMatch,
     { $lookup: { from: "products", localField: "items.product", foreignField: "_id", as: "product" } },
     { $unwind: { path: "$product", preserveNullAndEmptyArrays: true } },
     { $group: { _id: "$product.category", amount: { $sum: "$items.lineTotal" } } },
@@ -348,7 +360,7 @@ export async function getDashboardSummary(options = {}) {
     BulkInventory.aggregate(lowStockCountPipeline(storeId)),
     StockLedger.countDocuments({ ...scopeMatch(storeId, from, to), referenceType: "stock_transfer", movementType: "transfer_out" }),
     Store.find(storeId ? { _id: oid(storeId), isActive: true } : { isActive: true }).lean(),
-    Sale.find({ ...scopeMatch(storeId, from, to), status: "completed" }).populate("store customer items.product").sort({ createdAt: -1 }).limit(8).lean(),
+    Sale.find({ ...scopeMatch(storeId, from, to), ...revenueSaleMatch }).populate("store customer items.product").sort({ createdAt: -1 }).limit(8).lean(),
     StockLedger.find({ ...storeFilter }).select("movementType").sort({ createdAt: -1 }).limit(25).lean(),
     lossSummary(from,           storeId, to),
     lossSummary(today,          storeId, todayEnd),
@@ -361,8 +373,10 @@ export async function getDashboardSummary(options = {}) {
     Product.countDocuments({ ...storeFilter, category: "used_phone", inventoryStatus: "under_repair", isActive: true }),
     // Outstanding money owed on completed sales (grandTotal not fully paid).
     Sale.aggregate([
-      { $match: { ...storeFilter, status: "completed", paymentStatus: { $in: ["pending", "partial"] } } },
-      { $group: { _id: null, outstanding: { $sum: { $subtract: ["$grandTotal", "$amountPaid"] } }, count: { $sum: 1 } } },
+      // A fully retrieved sale is not money still owed, so it drops out with
+      // the status match; a partial one is netted down to what is still due.
+      { $match: { ...storeFilter, ...revenueSaleMatch, paymentStatus: { $in: ["pending", "partial"] } } },
+      { $group: { _id: null, outstanding: { $sum: { $max: [0, { $subtract: [netOfRetrieved("grandTotal", "retrievedTotal"), "$amountPaid"] }] } }, count: { $sum: 1 } } },
     ]),
     salesTrend(storeId, from, to),
     topProducts(storeId, from, to),

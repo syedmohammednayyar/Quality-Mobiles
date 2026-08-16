@@ -6,3 +6,14 @@
 .sales-drawer-payments{display:flex;flex-direction:column;gap:6px}.sales-drawer-payment-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-radius:7px;background:var(--bg-secondary);font-size:12px;font-weight:750}
 .sales-drawer-financials{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px;border-radius:8px;background:var(--bg-secondary)}.sales-drawer-financials div{display:flex;flex-direction:column;gap:2px}.sales-drawer-financials span{font-size:10px;text-transform:uppercase;color:var(--text-secondary);font-weight:850}.sales-drawer-financials .highlight strong{color:var(--color-primary-600)}
 @media(max-width:650px){.sales-drawer-body dl,.sales-drawer-financials{grid-template-columns:1fr}.sales-drawer-item-grid{grid-template-columns:1fr 1fr}}
+
+/* Retrieved lines: the sale still happened, so the row stays in history —
+   muted and struck through rather than removed, so it reads as reversed
+   instead of as a sale that still counts. */
+.sales-table-modern tbody tr.row-retrieved{background:color-mix(in srgb,var(--bg-secondary) 70%,var(--bg-primary));color:var(--text-secondary)}
+.sales-table-modern tbody tr.row-retrieved td strong{text-decoration:line-through;text-decoration-thickness:1px;color:var(--text-secondary)}
+.sales-table-modern tbody tr.row-retrieved .sales-status{text-decoration:none}
+.sales-retrieved-note{display:block;margin-top:4px;color:var(--status-warning-text)!important;font-size:10px;font-weight:850;text-transform:uppercase;letter-spacing:.03em}
+.sales-status.retrieved{background:var(--status-warning-bg);color:var(--status-warning-text)!important;margin-left:6px}
+.sales-drawer-item.retrieved{border-left-color:var(--status-warning-text);opacity:.85}
+.sales-drawer-item.retrieved .sales-drawer-item-head strong{text-decoration:line-through}

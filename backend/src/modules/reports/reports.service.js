@@ -7,10 +7,20 @@ import {
 } from "../../db/models.js";
 import { HttpError } from "../../utils/httpError.js";
 import { isLowStock } from "../inventory/activeStock.js";
+import { revenueSaleMatch } from "../sales/saleStatus.js";
 
 const money = (value) => Number(value || 0);
 const id    = (value) => String(value?._id || value || "");
 const name  = (value, fallback = "") => value?.name || value?.fullName || value?.username || fallback;
+
+// A retrieved sale line was returned to sellable stock, so it stops counting
+// as revenue or as a unit sold. Sale-level totals are netted down by the
+// running retrieval figures the sale carries; item-level ones skip the
+// retrieved lines outright. Fully retrieved sales never reach here — they are
+// excluded by the query's status match.
+const saleNet   = (sale) => Math.max(0, money(sale.grandTotal) - money(sale.retrievedTotal));
+const saleGross = (sale) => Math.max(0, money(sale.originalAmount || sale.grandTotal) - money(sale.retrievedOriginalTotal));
+const liveItems = (sale) => (sale.items || []).filter((item) => !item.retrievedAt);
 
 // Resolves the requested reporting window to a concrete [start, end] pair.
 // Every branch returns real Date objects so the caller can build an indexed
@@ -76,8 +86,8 @@ function groupTrend(sales, buybacks, expenses, losses) {
   };
   sales.forEach((x) => {
     const r = row(x.createdAt);
-    r.grossSales  += money(x.originalAmount || x.grandTotal);
-    r.netSales    += money(x.grandTotal);
+    r.grossSales  += saleGross(x);
+    r.netSales    += saleNet(x);
     r.adjustments += money(x.priceAdjustmentTotal);
     r.exchanges   += money(x.exchangeTotal);
   });
@@ -100,7 +110,10 @@ export async function getAdminReportOverview(filters) {
     priceAdjustments, losses,
   ] = await Promise.all([
     Store.find(storeIds.length ? { _id: { $in: storeIds }, isActive: true } : { isActive: true }).lean(),
-    Sale.find({ ...storeQuery, ...dateQuery }).populate("store customer employee items.product").sort({ createdAt: -1 }).limit(1000).lean(),
+    // Revenue-bearing sales only: a fully retrieved sale is excluded outright,
+    // and the KPI reducers below net partially retrieved ones down by what
+    // came back, so a returned device cannot overstate the period.
+    Sale.find({ ...storeQuery, ...dateQuery, ...revenueSaleMatch }).populate("store customer employee items.product").sort({ createdAt: -1 }).limit(1000).lean(),
     Buyback.find({ ...storeQuery, ...dateQuery }).populate("store customer inventoryProduct createdBy").sort({ createdAt: -1 }).limit(1000).lean(),
     Expense.find({ ...storeQuery, ...dateQuery }).lean(),
     PaymentEntry.find({ ...storeQuery, ...dateQuery }).lean(),
@@ -117,8 +130,8 @@ export async function getAdminReportOverview(filters) {
   const exchangeBuybacks = buybacks.filter((x) => x.transactionType === "exchange" || x.linkedSale);
 
   // ── KPIs ───────────────────────────────────────────────────────────────────
-  const grossRevenue         = sales.reduce((sum, x) => sum + money(x.originalAmount || x.grandTotal), 0);
-  const netRevenue           = sales.reduce((sum, x) => sum + money(x.grandTotal), 0);
+  const grossRevenue         = sales.reduce((sum, x) => sum + saleGross(x), 0);
+  const netRevenue           = sales.reduce((sum, x) => sum + saleNet(x), 0);
   const totalPriceAdjustments= sales.reduce((sum, x) => sum + money(x.priceAdjustmentTotal), 0);
   const totalExchangeValue   = sales.reduce((sum, x) => sum + money(x.exchangeTotal), 0);
   const buybackCost          = buybacks.reduce((sum, x) => sum + money(x.negotiatedPrice), 0);
@@ -126,7 +139,7 @@ export async function getAdminReportOverview(filters) {
   const inventoryValue       = serialized.filter((x) => x.status === "in_stock").reduce((sum, x) => sum + money(x.product?.unitPrice), 0)
     + bulk.reduce((sum, x) => sum + money(x.quantity) * money(x.product?.unitPrice), 0);
   const outstandingPayments  = payments.reduce((sum, x) => sum + money(x.outstandingAmount), 0);
-  const productsSold         = sales.reduce((sum, x) => sum + x.items.reduce((n, item) => n + money(item.quantity), 0), 0);
+  const productsSold         = sales.reduce((sum, x) => sum + liveItems(x).reduce((n, item) => n + money(item.quantity), 0), 0);
   const netProfit            = netRevenue - buybackCost - totalExpenses;
 
   // ── Loss Management KPIs ────────────────────────────────────────────────────
@@ -134,7 +147,7 @@ export async function getAdminReportOverview(filters) {
   const lossItemCount        = losses.length;
   const lossTransactionCount = new Set(losses.map((x) => id(x.sale))).size;
   const averageLoss          = lossItemCount > 0 ? Number((totalLoss / lossItemCount).toFixed(2)) : 0;
-  const totalProfit          = sales.reduce((sum, sale) => sum + (sale.items || []).reduce((s, item) => s + (money(item.grossResult) > 0 ? money(item.grossResult) : 0), 0), 0);
+  const totalProfit          = sales.reduce((sum, sale) => sum + liveItems(sale).reduce((s, item) => s + (money(item.grossResult) > 0 ? money(item.grossResult) : 0), 0), 0);
   const netGrossResult       = totalProfit - totalLoss;
 
   // ── Store performance ──────────────────────────────────────────────────────
@@ -146,12 +159,12 @@ export async function getAdminReportOverview(filters) {
     return {
       storeCode:        store.code,
       storeName:        store.name,
-      grossRevenue:     storeSales.reduce((sum, x) => sum + money(x.originalAmount || x.grandTotal), 0),
-      revenue:          storeSales.reduce((sum, x) => sum + money(x.grandTotal), 0),
+      grossRevenue:     storeSales.reduce((sum, x) => sum + saleGross(x), 0),
+      revenue:          storeSales.reduce((sum, x) => sum + saleNet(x), 0),
       priceAdjustments: storeSales.reduce((sum, x) => sum + money(x.priceAdjustmentTotal), 0),
       exchangeValue:    storeSales.reduce((sum, x) => sum + money(x.exchangeTotal), 0),
       sales:            storeSales.length,
-      productsSold:     storeSales.reduce((sum, x) => sum + x.items.reduce((n, item) => n + money(item.quantity), 0), 0),
+      productsSold:     storeSales.reduce((sum, x) => sum + liveItems(x).reduce((n, item) => n + money(item.quantity), 0), 0),
       inventoryValue:   storeSerialized.reduce((sum, x) => sum + money(x.product?.unitPrice), 0) + storeBulk.reduce((sum, x) => sum + money(x.quantity) * money(x.product?.unitPrice), 0),
       buybackValue:     buybacks.filter((x) => id(x.store) === sId).reduce((sum, x) => sum + money(x.negotiatedPrice), 0),
       employees:        employees.filter((x) => id(x.store) === sId && x.isActive !== false).length,
@@ -182,7 +195,11 @@ export async function getAdminReportOverview(filters) {
     adjustmentDelta: money(item.lineAdjustmentDelta),
     amount:          money(item.lineAdjustedTotal  || item.lineTotal),
     date:            sale.createdAt,
-    status:          sale.status,
+    // Per line, not per bill: on a partially retrieved sale the lines that
+    // were not returned are still ordinary completed sales.
+    status:          item.retrievedAt ? "retrieved" : sale.status,
+    retrieved:       Boolean(item.retrievedAt),
+    retrievedAt:     item.retrievedAt || null,
   })));
 
   // ── Inventory rows ─────────────────────────────────────────────────────────
@@ -200,8 +217,8 @@ export async function getAdminReportOverview(filters) {
     return {
       id: id(customer), customer: customer.fullName, phone: customer.phone || "",
       purchases: cSales.length,
-      grossSpending:  cSales.reduce((sum, x) => sum + money(x.originalAmount || x.grandTotal), 0),
-      spending:       cSales.reduce((sum, x) => sum + money(x.grandTotal), 0),
+      grossSpending:  cSales.reduce((sum, x) => sum + saleGross(x), 0),
+      spending:       cSales.reduce((sum, x) => sum + saleNet(x), 0),
       adjustments:    cSales.reduce((sum, x) => sum + money(x.priceAdjustmentTotal), 0),
       exchangeValue:  cSales.reduce((sum, x) => sum + money(x.exchangeTotal), 0),
       lastPurchase:   cSales[0]?.createdAt || null,
@@ -218,11 +235,11 @@ export async function getAdminReportOverview(filters) {
       id: id(employee), employee: employee.fullName, store: name(employee.store),
       role:             employee.user?.role || "Employee",
       sales:            eSales.length,
-      grossRevenue:     eSales.reduce((sum, x) => sum + money(x.originalAmount || x.grandTotal), 0),
-      revenue:          eSales.reduce((sum, x) => sum + money(x.grandTotal), 0),
+      grossRevenue:     eSales.reduce((sum, x) => sum + saleGross(x), 0),
+      revenue:          eSales.reduce((sum, x) => sum + saleNet(x), 0),
       priceAdjustments: eSales.reduce((sum, x) => sum + money(x.priceAdjustmentTotal), 0),
       adjustmentCount:  priceAdjustments.filter((a) => id(a.employee) === id(employee)).length,
-      productsSold:     eSales.reduce((sum, x) => sum + x.items.length, 0),
+      productsSold:     eSales.reduce((sum, x) => sum + liveItems(x).length, 0),
       lastActivity:     eSales[0]?.createdAt || employee.updatedAt,
       lossTotal:        eLossTotal,
       lossTransactions: new Set(eLosses.map((l) => id(l.sale))).size,
@@ -234,7 +251,7 @@ export async function getAdminReportOverview(filters) {
   const movementRows = [
     ...serialized.map((x) => ({ id: `added-${id(x)}`, jobNumber: x.jobNumber || x.product?.jobId || "", imei: x.imei || "", product: x.product?.name || "", event: "Product Added", store: name(x.store), date: x.createdAt, by: name(x.addedBy), currentStatus: x.status })),
     ...transferRows.map((x) => ({ id: `transfer-${x.id}`, jobNumber: x.jobNumber, imei: "", product: x.product, event: `Transfer: ${x.fromStore} to ${x.toStore}`, store: x.toStore, date: x.transferDate, by: x.transferredBy, currentStatus: "transferred" })),
-    ...saleRows.map((x) => ({ id: `sale-${x.id}-${x.jobNumber}`, jobNumber: x.jobNumber, imei: x.imei, product: x.product, event: `Sold: ${x.saleId}`, store: x.store, date: x.date, by: x.employee, currentStatus: "sold" })),
+    ...saleRows.map((x) => ({ id: `sale-${x.id}-${x.jobNumber}`, jobNumber: x.jobNumber, imei: x.imei, product: x.product, event: x.retrieved ? `Retrieved: ${x.saleId}` : `Sold: ${x.saleId}`, store: x.store, date: x.date, by: x.employee, currentStatus: x.retrieved ? "retrieved" : "sold" })),
   ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   // ── Price adjustment rows ──────────────────────────────────────────────────
@@ -255,7 +272,9 @@ export async function getAdminReportOverview(filters) {
   }));
 
   // ── Profitability rows (per product, serialized inventory sold in period) ──
-  const profitabilityRows = saleRows.map((row) => {
+  // Retrieved lines earned nothing — the device came back — so they are left
+  // out of margin analysis rather than reported as profit or loss.
+  const profitabilityRows = saleRows.filter((row) => !row.retrieved).map((row) => {
     const product = serialized.find((s) => s.product?.jobId === row.jobNumber || s.imei === row.imei)?.product
       || null;
     const purchasePrice = money(product?.purchasePrice);

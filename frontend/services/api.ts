@@ -183,6 +183,11 @@ export interface ApiSaleItem {
   effective_selling_amount?: string;
   gross_result?: string;
   is_loss?: boolean;
+  // Set when this line was retrieved — the device went back to sellable stock
+  // after the sale, so the line no longer counts as sold.
+  retrieved?: boolean;
+  retrieved_at?: string | null;
+  retrieval_reason?: string | null;
   // fields sent on create (used by POS)
   adjustedUnitPrice?: number;
   adjustmentReason?: string;
@@ -230,12 +235,20 @@ export interface ApiSale {
   store_name?: string;
   employee_name?: string;
   payment_method?: string;
-  sale_status?: "completed" | "draft" | "cancelled";
+  sale_status?: "completed" | "draft" | "cancelled" | "partially_retrieved" | "retrieved";
   // enterprise amount breakdown
   original_amount?: string;
   adjusted_amount?: string;
   price_adjustment_total?: string;
   exchange_total?: string;
+  // Retrieval breakdown. total_amount stays the originally billed figure so
+  // history reads true; net_amount is what the sale still counts for once
+  // retrieved items are taken off.
+  retrieved_total?: string;
+  net_amount?: string;
+  is_retrieved?: boolean;
+  is_partially_retrieved?: boolean;
+  retrieved_at?: string | null;
 }
 
 export type BuybackWorkflowStatus =
@@ -1878,6 +1891,9 @@ export interface ApiSaleDetailItem {
   effective_selling_amount: string;
   gross_result: string;
   is_loss: boolean;
+  retrieved?: boolean;
+  retrieved_at?: string | null;
+  retrieval_reason?: string;
 }
 
 export interface ApiSaleDetailPayment {
@@ -1912,6 +1928,10 @@ export interface ApiSaleDetail {
   discount_total: string;
   exchange_total: string;
   grand_total: string;
+  retrieved_total?: string;
+  net_total?: string;
+  is_retrieved?: boolean;
+  is_partially_retrieved?: boolean;
   amount_paid: string;
   payment_status: string;
   job_number: string;

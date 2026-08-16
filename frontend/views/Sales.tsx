@@ -102,6 +102,23 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
     });
   }, [rows, search, storeFilter, employeeFilter, paymentFilter, statusFilter, fromDate, toDate]);
 
+  // The table is one row per sale *item*, so the header total has to sum each
+  // sale once — not once per line — and count only what is still sold. A
+  // retrieved item went back to stock, so its money no longer belongs here.
+  const { filteredTotal, liveRowCount, retrievedRowCount } = useMemo(() => {
+    const seen = new Set<string>();
+    let total = 0;
+    let live = 0;
+    let retrieved = 0;
+    filteredRows.forEach(({ sale, item }) => {
+      if (item.retrieved) retrieved += 1; else live += 1;
+      if (seen.has(sale.id)) return;
+      seen.add(sale.id);
+      total += Number(sale.net_amount ?? sale.total_amount ?? 0);
+    });
+    return { filteredTotal: total, liveRowCount: live, retrievedRowCount: retrieved };
+  }, [filteredRows]);
+
   useEffect(() => {
     if (!viewSaleId) { setViewDetail(null); return; }
     let cancelled = false;
@@ -123,8 +140,8 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
   return (
     <div className="sales-page">
       <header className="module-header sales-header">
-        <div><h1>Sales History</h1><p>{filteredRows.length} sold products &middot; exchange and adjustments shown separately</p></div>
-        <strong>Rs {filteredRows.reduce((sum, row) => sum + Number(row.sale.total_amount || row.item.line_total || row.item.unit_price || 0), 0).toLocaleString()}</strong>
+        <div><h1>Sales History</h1><p>{liveRowCount} sold products{retrievedRowCount > 0 ? ` · ${retrievedRowCount} retrieved` : ''} &middot; exchange and adjustments shown separately</p></div>
+        <strong>Rs {filteredTotal.toLocaleString()}</strong>
       </header>
 
       <section className="sales-filters">
@@ -156,10 +173,13 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                   })
                 : null;
               return (
-              <tr key={key} className={item.is_loss ? 'row-loss' : undefined}>
+              <tr key={key} className={[item.retrieved ? 'row-retrieved' : '', item.is_loss && !item.retrieved ? 'row-loss' : ''].filter(Boolean).join(' ') || undefined}>
                 <td><strong>{sale.sale_no || sale.id}</strong></td>
                 <td>{item.job_no || sale.job_no || '-'}</td>
-                <td><strong>{item.product_name || '-'}</strong><span>{item.brand || ''}</span></td>
+                <td>
+                  <strong>{item.product_name || '-'}</strong><span>{item.brand || ''}</span>
+                  {item.retrieved && <span className="sales-retrieved-note" title={item.retrieval_reason || undefined}>Returned to stock{item.retrieved_at ? ` on ${formatDateTime(item.retrieved_at)}` : ''}</span>}
+                </td>
                 <td>{item.imei || '-'}</td>
                 <td>{sale.customer_name || 'Walk-in'}</td>
                 <td>{sale.store_name || '-'}</td>
@@ -169,13 +189,22 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                   <span className="sales-list-price">Exchange: −Rs {Number(sale.exchange_total || 0).toLocaleString()}</span>
                   <span className="sales-list-price">Other adj.: −Rs {Number(sale.price_adjustment_total || 0).toLocaleString()}</span>
                   <span className="sales-list-price">Final: Rs {Number(sale.total_amount || item.line_total || item.unit_price || 0).toLocaleString()}</span>
+                  {Number(sale.retrieved_total || 0) > 0 && <span className="sales-list-price">Retrieved: −Rs {Number(sale.retrieved_total).toLocaleString()}</span>}
                 </td>
-                <td>{itemMargin
-                  ? <><MarginAmount result={itemMargin} /> <MarginBadge result={itemMargin} compact /></>
-                  : <span className="margin-value margin-unknown">N/A</span>}</td>
+                {/* A retrieved line never earned its margin — showing one
+                    would read as realised profit on a device that came back. */}
+                <td>{item.retrieved
+                  ? <span className="margin-value margin-unknown">Reversed</span>
+                  : itemMargin
+                    ? <><MarginAmount result={itemMargin} /> <MarginBadge result={itemMargin} compact /></>
+                    : <span className="margin-value margin-unknown">N/A</span>}</td>
                 <td>{sale.payment_method || '-'}</td>
                 <td>{formatDateTime(sale.sold_at)}</td>
-                <td><span className={`sales-status ${sale.payment_status || 'pending'}`}>{sale.payment_status || sale.sale_status || 'completed'}</span></td>
+                {/* Retrieval outranks payment state here: a device that went
+                    back to stock must not keep reading as a paid sale. */}
+                <td>{item.retrieved
+                  ? <span className="sales-status retrieved" title={item.retrieval_reason || 'Product retrieved and returned to stock'}>retrieved</span>
+                  : <span className={`sales-status ${sale.payment_status || 'pending'}`}>{sale.payment_status || sale.sale_status || 'completed'}</span>}</td>
                 <td><button type="button" className="sales-view-btn" onClick={() => setViewSaleId(sale.id)}>View</button></td>
               </tr>
               );
@@ -208,7 +237,11 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                   <dt>Store</dt><dd>{viewDetail.store_name}</dd>
                   <dt>Employee</dt><dd>{viewDetail.employee_name}</dd>
                   <dt>Customer</dt><dd>{viewDetail.customer_name}{viewDetail.customer_phone ? ` (${viewDetail.customer_phone})` : ''}</dd>
-                  <dt>Status</dt><dd><span className={`sales-status ${viewDetail.payment_status}`}>{viewDetail.payment_status}</span></dd>
+                  <dt>Status</dt><dd>
+                    <span className={`sales-status ${viewDetail.payment_status}`}>{viewDetail.payment_status}</span>
+                    {viewDetail.is_retrieved && <span className="sales-status retrieved">retrieved</span>}
+                    {viewDetail.is_partially_retrieved && <span className="sales-status retrieved">partially retrieved</span>}
+                  </dd>
                   {viewDetail.attended_by_name && <><dt>Attended By</dt><dd>{viewDetail.attended_by_name}</dd></>}
                   {viewDetail.referred_by_name && <><dt>Referred By</dt><dd>{viewDetail.referred_by_name}</dd></>}
                   {viewDetail.job_number && <><dt>Job Number</dt><dd>{viewDetail.job_number}</dd></>}
@@ -220,7 +253,9 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                     can still clear overall, so the sale is judged on its total
                     while each item keeps its own verdict below. */}
                 {(() => {
-                  const priced = viewDetail.items.filter((item) => Number(item.cost_basis) > 0);
+                  // Retrieved items are excluded: their cost and revenue both
+                  // came back, so folding them in would distort the margin.
+                  const priced = viewDetail.items.filter((item) => !item.retrieved && Number(item.cost_basis) > 0);
                   if (priced.length === 0) return null;
                   const totalCost = priced.reduce((sum, item) => sum + Number(item.cost_basis), 0);
                   const totalEffective = priced.reduce((sum, item) => sum + Number(item.effective_selling_amount || item.line_total), 0);
@@ -235,11 +270,12 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                 <h3>Items</h3>
                 <div className="sales-drawer-items">
                   {viewDetail.items.map((item) => (
-                    <div key={item.id} className={`sales-drawer-item${item.is_loss ? ' loss' : ''}`}>
+                    <div key={item.id} className={`sales-drawer-item${item.retrieved ? ' retrieved' : item.is_loss ? ' loss' : ''}`}>
                       <div className="sales-drawer-item-head">
                         <strong>{item.product_name}</strong>
                         <span>{item.brand} {item.model}</span>
                         <span>{item.imei || item.job_id || item.sku || '-'}</span>
+                        {item.retrieved && <span className="sales-status retrieved">retrieved</span>}
                       </div>
                       <div className="sales-drawer-item-grid">
                         <div><span>Qty</span><strong>{item.quantity}</strong></div>
@@ -247,8 +283,11 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                         <div><span>Sold Price</span><strong>{money(item.adjusted_unit_price)}</strong></div>
                         <div><span>Line Total</span><strong>{money(item.line_total)}</strong></div>
                         <div><span>Cost Basis</span><strong>{money(item.cost_basis)}</strong></div>
-                        <div><span>Result</span><strong className={item.is_loss ? 'loss' : 'profit'}>{item.is_loss ? `− ${money(Math.abs(Number(item.gross_result)))} Loss` : `+ ${money(Math.abs(Number(item.gross_result)))} Profit`}</strong></div>
+                        <div><span>Result</span>{item.retrieved
+                          ? <strong>Reversed</strong>
+                          : <strong className={item.is_loss ? 'loss' : 'profit'}>{item.is_loss ? `− ${money(Math.abs(Number(item.gross_result)))} Loss` : `+ ${money(Math.abs(Number(item.gross_result)))} Profit`}</strong>}</div>
                       </div>
+                      {item.retrieved && <p className="sales-drawer-item-note">Retrieved{item.retrieved_at ? ` on ${formatDateTime(item.retrieved_at)}` : ''} and returned to sellable stock{item.retrieval_reason ? `: ${item.retrieval_reason}` : ''}</p>}
                       {item.price_was_adjusted && <p className="sales-drawer-item-note">Price adjusted{item.adjustment_category ? ` (${item.adjustment_category})` : ''}{item.adjustment_reason ? `: ${item.adjustment_reason}` : ''}</p>}
                     </div>
                   ))}
@@ -274,6 +313,10 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                   <div><span>Exchange</span><strong>{money(viewDetail.exchange_total)}</strong></div>
                   <div><span>Tax</span><strong>{money(viewDetail.tax_total)}</strong></div>
                   <div className="highlight"><span>Grand Total</span><strong>{money(viewDetail.grand_total)}</strong></div>
+                  {Number(viewDetail.retrieved_total || 0) > 0 && <>
+                    <div><span>Retrieved</span><strong>− {money(viewDetail.retrieved_total || 0)}</strong></div>
+                    <div className="highlight"><span>Net After Retrieval</span><strong>{money(viewDetail.net_total || viewDetail.grand_total)}</strong></div>
+                  </>}
                   <div><span>Amount Paid</span><strong>{money(viewDetail.amount_paid)}</strong></div>
                 </div>
 

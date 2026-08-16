@@ -5,6 +5,7 @@ import { HttpError } from "../../utils/httpError.js";
 import { toObjectId } from "../../utils/ids.js";
 import { writeAudit } from "../../utils/audit.js";
 import { nextSequence } from "../../utils/sequence.js";
+import { retrieveSoldProductLine } from "../sales/saleRetrieval.service.js";
 
 // Fields whose change is significant enough to require a remark and an audit entry.
 const AUDITED_FIELDS = ["unitPrice", "purchasePrice", "discount", "taxRate", "inventoryStatus", "isActive", "name", "brand", "model", "category"];
@@ -526,6 +527,29 @@ export async function updateProduct(productId, input) {
           Number(input.minStockLevel || 0),
         );
       }
+    }
+
+    // Coming back off "sold" is a retrieval: the device returns to sellable
+    // stock, so the sale it came from has to stop counting it as sold. Without
+    // this the two sides disagree — Inventory shows the phone as available
+    // while Sales History still reports the transaction as a plain completed
+    // sale and the money still lands in revenue.
+    //
+    // Inventory was already restored above, so the sales side only reverses
+    // the sale line. A product that was never actually billed has no live sale
+    // line and simply reconciles to nothing.
+    const wasRetrieved = beforeSnapshot.inventoryStatus === "sold"
+      && input.inventoryStatus !== undefined
+      && product.inventoryStatus !== "sold";
+
+    if (wasRetrieved) {
+      await retrieveSoldProductLine({
+        productId: product._id,
+        storeId: targetStore ? toObjectId(targetStore, "STORE_INVALID_ID") : product.store,
+        userId: input.userId,
+        reason: remark,
+        session,
+      });
     }
 
     return mapProduct(product, targetStore);

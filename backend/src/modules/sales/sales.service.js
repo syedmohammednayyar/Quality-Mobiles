@@ -10,6 +10,7 @@ import { writeAudit } from "../../utils/audit.js";
 import { nextSequence } from "../../utils/sequence.js";
 import { allocateEffectiveSellingAmounts, classifyLossType, computeCostBasis, evaluateLoss } from "../losses/lossCalculation.service.js";
 import { createLossRecordsForSale, reverseLossesForSale } from "../losses/losses.service.js";
+import { historySaleMatch } from "./saleStatus.js";
 
 // ─── Money helpers ────────────────────────────────────────────────────────────
 
@@ -477,6 +478,12 @@ function mapSaleDetail(sale) {
     discount_total:          Number(sale.discountTotal || 0).toFixed(2),
     exchange_total:          Number(sale.exchangeTotal || 0).toFixed(2),
     grand_total:             Number(sale.grandTotal || 0).toFixed(2),
+    // Retrieval breakdown: grand_total is the original bill and never moves;
+    // net_total is what the sale still counts for after items came back.
+    retrieved_total:         Number(sale.retrievedTotal || 0).toFixed(2),
+    net_total:               Math.max(0, Number(sale.grandTotal || 0) - Number(sale.retrievedTotal || 0)).toFixed(2),
+    is_retrieved:            sale.status === "retrieved",
+    is_partially_retrieved:  sale.status === "partially_retrieved",
     amount_paid:             Number(sale.amountPaid || 0).toFixed(2),
     payment_status:          sale.paymentStatus,
     job_number:              sale.jobNumber || "",
@@ -510,6 +517,9 @@ function mapSaleDetail(sale) {
       effective_selling_amount:Number(item.effectiveSellingAmount || 0).toFixed(2),
       gross_result:            Number(item.grossResult || 0).toFixed(2),
       is_loss:                 Boolean(item.isLoss),
+      retrieved:               Boolean(item.retrievedAt),
+      retrieved_at:            item.retrievedAt || null,
+      retrieval_reason:        item.retrievalReason || "",
     })),
     payments: sale.payments.map((p) => ({
       id:           String(p._id),
@@ -543,7 +553,11 @@ export async function listSales(input) {
   const query  = {};
   if (input?.storeId) query.store = input.storeId;
 
-  const sales = await Sale.find({ ...query, status: "completed" })
+  // Retrieved sales stay in history rather than vanishing — the transaction
+  // really happened, and hiding it would leave the reversal invisible. They
+  // come back flagged, with their retrieved value broken out, so the list can
+  // show what was returned instead of presenting it as a plain completed sale.
+  const sales = await Sale.find({ ...query, ...historySaleMatch })
     .populate("customer", "fullName phone")
     .populate("store", "name")
     .populate("employee", "fullName")
@@ -571,6 +585,15 @@ export async function listSales(input) {
     total_amount:    Number(sale.grandTotal    || 0).toFixed(2),
     payment_status:  sale.paymentStatus,
     sale_status:     sale.status,
+    // total_amount stays the original billed figure; net_amount is what still
+    // counts after retrievals, which is the number every revenue figure uses.
+    retrieved_total: Number(sale.retrievedTotal || 0).toFixed(2),
+    net_amount:      Math.max(0, Number(sale.grandTotal || 0) - Number(sale.retrievedTotal || 0)).toFixed(2),
+    is_retrieved:    sale.status === "retrieved",
+    is_partially_retrieved: sale.status === "partially_retrieved",
+    retrieved_at:    sale.items.reduce((latest, item) => (
+      item.retrievedAt && (!latest || item.retrievedAt > latest) ? item.retrievedAt : latest
+    ), null),
     payment_method:  sale.payments.map((p) => p.paymentMethod).filter(Boolean).join(", "),
     items: sale.items.map((item) => ({
       id:               item._id?.toString?.(),
@@ -592,6 +615,9 @@ export async function listSales(input) {
       effective_selling_amount:Number(item.effectiveSellingAmount || 0).toFixed(2),
       gross_result:            Number(item.grossResult || 0).toFixed(2),
       is_loss:                 Boolean(item.isLoss),
+      retrieved:               Boolean(item.retrievedAt),
+      retrieved_at:            item.retrievedAt || null,
+      retrieval_reason:        item.retrievalReason || null,
     })),
   }));
 }

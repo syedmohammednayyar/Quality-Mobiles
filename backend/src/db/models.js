@@ -205,7 +205,17 @@ const saleSchema = new mongoose.Schema({
   store: { type: mongoose.Schema.Types.ObjectId, ref: 'Store', required: true },
   customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
   employee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true },
-  status: { type: String, default: 'completed', enum: ['draft', 'completed', 'cancelled'] },
+  // 'retrieved' / 'partially_retrieved' record that a sold device was taken
+  // back out of the sale and returned to sellable stock. The sale is never
+  // deleted — history keeps the transaction and shows what came back — but a
+  // fully retrieved sale stops counting as revenue anywhere.
+  status: { type: String, default: 'completed', enum: ['draft', 'completed', 'cancelled', 'partially_retrieved', 'retrieved'] },
+
+  // Amounts removed from this sale by retrievals, so a partially retrieved
+  // sale can be netted down without touching its immutable original totals.
+  retrievedTotal:         { type: Number, default: 0, min: 0 },  // against grandTotal
+  retrievedOriginalTotal: { type: Number, default: 0, min: 0 },  // against originalAmount
+  retrievedQuantity:      { type: Number, default: 0, min: 0 },  // units returned
 
   // Gross amounts (original prices before any adjustment)
   originalAmount:        { type: Number, default: 0, min: 0 },
@@ -247,6 +257,12 @@ const saleSchema = new mongoose.Schema({
     effectiveSellingAmount: { type: Number, default: 0 },
     grossResult:            { type: Number, default: 0 },
     isLoss:                 { type: Boolean, default: false },
+    // ─ Retrieval: this line was returned to stock after the sale ─
+    // The financial snapshot above stays untouched; these fields are what
+    // every revenue query excludes the line by.
+    retrievedAt:      { type: Date, default: null },
+    retrievedBy:      { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    retrievalReason:  { type: String, default: null },
   }],
   payments: [{
     paymentMethod: {

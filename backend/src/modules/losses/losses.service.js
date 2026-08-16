@@ -1,6 +1,7 @@
 import { LossRecord, Sale, Store, Employee, ExportLog } from "../../db/models.js";
 import { HttpError } from "../../utils/httpError.js";
 import { sanitizeCsvValue } from "../workflows/export.service.js";
+import { liveItemMatch, netOfRetrieved, revenueSaleMatch } from "../sales/saleStatus.js";
 
 function escapeRegex(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -71,6 +72,16 @@ export async function reverseLossesForSale({ saleId, userId, reason, session }) 
   );
 }
 
+// A product retrieval reverses one line, not the whole bill — the other items
+// on a multi-item sale were still genuinely sold, so their loss records stand.
+export async function reverseLossesForSaleProduct({ saleId, productId, userId, reason, session }) {
+  await LossRecord.updateMany(
+    { sale: saleId, product: productId, lossStatus: "active" },
+    { $set: { lossStatus: "reversed", reversedAt: new Date(), reversedBy: userId || null, reversalReason: reason || "Product retrieved" } },
+    { session },
+  );
+}
+
 // ─── Query helpers ──────────────────────────────────────────────────────────
 
 function buildLossQuery(filters = {}) {
@@ -98,7 +109,7 @@ function buildLossQuery(filters = {}) {
 }
 
 function buildSaleMatch(filters = {}) {
-  const match = { status: "completed" };
+  const match = { ...revenueSaleMatch };
   if (filters.storeIds?.length) match.store = { $in: filters.storeIds };
   if (filters.employeeId) match.employee = filters.employeeId;
   if (filters.fromDate || filters.toDate) {
@@ -205,12 +216,14 @@ export async function getLossSummary(filters = {}) {
     Sale.aggregate([
       { $match: saleMatch },
       { $unwind: "$items" },
+      // A retrieved line's profit was never realised — the device came back.
+      liveItemMatch,
       { $match: { "items.grossResult": { $gt: 0 } } },
       { $group: { _id: null, totalProfit: { $sum: "$items.grossResult" } } },
     ]),
     Sale.aggregate([
       { $match: saleMatch },
-      { $group: { _id: null, totalRevenue: { $sum: "$grandTotal" } } },
+      { $group: { _id: null, totalRevenue: { $sum: netOfRetrieved("grandTotal", "retrievedTotal") } } },
     ]),
     Sale.countDocuments(saleMatch),
   ]);
