@@ -440,7 +440,13 @@ const POS: React.FC<POSProps> = ({ user }) => {
       setStatusMessage(`Bill processed: ${sale.sale_no || sale.id} | Rs ${toMoney(finalAmount)}`);
       clearBill();
     } catch (err) {
-      const message = isApiError(err) ? `${err.status} - ${err.message}` : (err instanceof Error ? err.message : 'Failed to process bill');
+      // Business-rule rejections (a device already sold, stock gone) carry a
+      // message the cashier can act on. Prefixing those with a status code
+      // only buries the instruction, so the code is kept for genuine faults.
+      const isBusinessRule = isApiError(err) && err.status >= 400 && err.status < 500;
+      const message = isApiError(err)
+        ? (isBusinessRule ? err.message : `${err.status} - ${err.message}`)
+        : (err instanceof Error ? err.message : 'Failed to process bill');
       setError(message);
     } finally {
       setIsProcessing(false);

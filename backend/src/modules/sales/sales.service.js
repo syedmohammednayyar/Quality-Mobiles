@@ -10,7 +10,7 @@ import { writeAudit } from "../../utils/audit.js";
 import { nextSequence } from "../../utils/sequence.js";
 import { allocateEffectiveSellingAmounts, classifyLossType, computeCostBasis, evaluateLoss } from "../losses/lossCalculation.service.js";
 import { createLossRecordsForSale, reverseLossesForSale } from "../losses/losses.service.js";
-import { historySaleMatch } from "./saleStatus.js";
+import { REVENUE_SALE_STATUSES, historySaleMatch } from "./saleStatus.js";
 
 // ─── Money helpers ────────────────────────────────────────────────────────────
 
@@ -70,6 +70,84 @@ function mergeItems(items) {
   return Array.from(map.values());
 }
 
+// ─── Duplicate-sale guard ─────────────────────────────────────────────────────
+// Stock counts alone never proved a device was still sellable. A stale
+// inventory row, a hand-edited status, or a return that was never recorded all
+// leave a sold handset looking available, and the sale went through anyway
+// under a second sale number — two active sales, one physical phone, one job
+// number. The authority for a single device is its transaction history, so
+// that is what gets checked here.
+
+// Categories that are always one physical unit. Mode alone is not enough:
+// `inventoryMode` defaults to "bulk", and phones added through the Inventory
+// form keep that default, but a handset is still one device with one job
+// number and one IMEI however its stock happens to be tracked.
+const UNIT_TRACKED_CATEGORIES = ["new_phone", "used_phone"];
+
+/** A product that is one physical item, not a countable pile. */
+export function isUnitTracked(product) {
+  return product.inventoryMode === "serialized"
+    || UNIT_TRACKED_CATEGORIES.includes(product.category)
+    || Boolean(product.imei)
+    || Boolean(product.serialNumber);
+}
+
+function describeProduct(product) {
+  const identity = [product.jobId && `Job ${product.jobId}`, product.imei && `IMEI ${product.imei}`]
+    .filter(Boolean)
+    .join(" / ");
+  return identity ? `${product.name} (${identity})` : product.name;
+}
+
+/**
+ * Reject a sale whose items are not genuinely available to sell.
+ *
+ * Two checks, both scoped to single-device products so multi-unit accessories
+ * keep selling from their stock count as before:
+ *
+ *   1. Current status — a device already flagged sold cannot be sold again
+ *      until it is retrieved, which is what returns it to "ready".
+ *   2. Transaction history — a device may hold at most one live sale line.
+ *      A line reversed by a retrieval is not live, so re-selling a genuinely
+ *      returned device stays allowed; that is the approved path back.
+ */
+async function assertNotAlreadySold(products, session) {
+  const unitTracked = products.filter(isUnitTracked);
+  if (unitTracked.length === 0) return;
+
+  const alreadySold = unitTracked.filter((product) => product.inventoryStatus === "sold");
+  if (alreadySold.length > 0) {
+    throw new HttpError(
+      409,
+      `${describeProduct(alreadySold[0])} is already marked sold. Retrieve it back to Ready for Sale before selling it again.`,
+      "SALE_PRODUCT_ALREADY_SOLD",
+    );
+  }
+
+  const liveSales = await Sale.find({
+    status: { $in: REVENUE_SALE_STATUSES },
+    items: { $elemMatch: { product: { $in: unitTracked.map((product) => product._id) }, retrievedAt: null } },
+  }).select("saleNo items.product items.retrievedAt").session(session);
+
+  if (liveSales.length === 0) return;
+
+  // One sale can hold a live line for one device and a retrieved line for
+  // another, so each product is matched against the lines individually rather
+  // than assuming every returned sale blocks every product.
+  for (const product of unitTracked) {
+    const blocking = liveSales.find((sale) => sale.items.some(
+      (line) => String(line.product) === String(product._id) && !line.retrievedAt,
+    ));
+    if (blocking) {
+      throw new HttpError(
+        409,
+        `${describeProduct(product)} was already sold on ${blocking.saleNo} and has not been retrieved. Retrieve it from that sale before selling it again.`,
+        "SALE_DUPLICATE_PRODUCT",
+      );
+    }
+  }
+}
+
 // ─── createSale ───────────────────────────────────────────────────────────────
 
 export async function createSale(input) {
@@ -92,6 +170,10 @@ export async function createSale(input) {
       throw new HttpError(400, "One or more products are invalid or inactive", "SALE_INVALID_PRODUCT");
     }
     const productMap = new Map(products.map((p) => [p._id.toString(), p]));
+
+    // Verify each device is genuinely sellable before anything is priced or
+    // written — status and sale history, not just the stock count.
+    await assertNotAlreadySold(products, session);
 
     // ── Load buyback cost basis for used-phone items (Loss Management) ─────
     const usedPhoneProductIds = products.filter((p) => p.category === "used_phone").map((p) => p._id);
