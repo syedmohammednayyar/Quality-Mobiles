@@ -1360,6 +1360,15 @@ export async function listStores(): Promise<ApiStore[]> {
   return result.rows.map(mapStoreRow);
 }
 
+// The store master list above is scoped to the caller's own store, so a
+// Manager never sees a peer store through it. A transfer still needs every
+// active store as a possible destination — this endpoint is unscoped and open
+// to Managers for exactly that reason.
+export async function listTransferDestinationStores(): Promise<ApiStore[]> {
+  const result = await apiRequest<{ rows: BackendStoreRow[] }>("/inventory/stores");
+  return result.rows.map(mapStoreRow);
+}
+
 export async function listStoreInventory(storeId: string, filters: { search?: string; category?: string; stockStatus?: string; limit?: number; offset?: number } = {}): Promise<ApiStoreInventoryRow[]> {
   const params = new URLSearchParams({ store_id: storeId });
   if (filters.search) params.set("search", filters.search);

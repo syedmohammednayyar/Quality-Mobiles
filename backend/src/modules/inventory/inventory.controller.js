@@ -164,8 +164,13 @@ export async function transferStockHandler(req, res, next) {
     if (!req.auth) throw new HttpError(401, "Authentication required", "AUTH_REQUIRED");
 
     const body = transferBodySchema.parse(req.body);
+    // Stock may only be moved *out of* a store the caller is scoped to. The
+    // destination is the receiving side of the movement, so it is deliberately
+    // not scope-checked: a Manager is scoped to a single store, so requiring
+    // access on both ends would make every non-admin transfer impossible.
+    // transferStock() still verifies the destination is a real, active store
+    // and rejects a transfer back into the source.
     assertStoreAccess(req.auth, body.from_store_id);
-    assertStoreAccess(req.auth, body.to_store_id);
     const result = await transferStock({
       fromStoreId: body.from_store_id,
       toStoreId: body.to_store_id,

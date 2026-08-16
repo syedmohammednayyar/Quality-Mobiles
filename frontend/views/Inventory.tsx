@@ -11,6 +11,7 @@ import {
   getProductStockByStore,
   listStoreInventory,
   listProductTransferHistory,
+  listTransferDestinationStores,
   transferInventoryStock,
   updateProduct,
   type ApiProductHistoryEntry,
@@ -141,6 +142,11 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
   const [form, setForm] = useState<ProductForm>(() => buildBlankForm(''));
   const [transferRow, setTransferRow] = useState<ApiStoreInventoryRow | null>(null);
   const [transferStoreId, setTransferStoreId] = useState('');
+  // Every active store, regardless of who is logged in — the `stores` prop is
+  // scoped to the user's own store, which leaves a Manager with no destination
+  // to pick. Only the transfer modal uses this; the rest of the page stays on
+  // the scoped list.
+  const [destinationStores, setDestinationStores] = useState<ApiStore[]>([]);
   const [statusFilter, setStatusFilter] = useState('all');
   // 'all' | 'PROFIT' | 'BREAK_EVEN' | 'LOSS' — lets a manager pull up every
   // product currently priced below cost in one step.
@@ -168,6 +174,23 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
       setLoading(false);
     }
   }, [visibleStores]);
+
+  // Destinations are only needed by the transfer modal, so a failure here is
+  // not worth breaking the page over — the dropdown just falls back to the
+  // stores this user can already see.
+  useEffect(() => {
+    if (!isAdmin && !isManager) return;
+    let cancelled = false;
+    void listTransferDestinationStores()
+      .then((rows) => { if (!cancelled) setDestinationStores(rows.filter((store) => store.is_active)); })
+      .catch(() => { if (!cancelled) setDestinationStores([]); });
+    return () => { cancelled = true; };
+  }, [isAdmin, isManager]);
+
+  const transferDestinations = useMemo(() => {
+    const pool = destinationStores.length > 0 ? destinationStores : activeStores;
+    return transferRow ? pool.filter((store) => store.id !== transferRow.store_id) : [];
+  }, [activeStores, destinationStores, transferRow]);
 
   // Keep the add-to target aligned with what is on screen. In the consolidated
   // view there is no single answer, so the admin is asked to pick one.
@@ -736,7 +759,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
               <label><span>To Store</span>
                 <select value={transferStoreId} onChange={(event) => setTransferStoreId(event.target.value)}>
                   <option value="">Select destination</option>
-                  {activeStores.filter((store) => store.id !== transferRow.store_id).map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+                  {transferDestinations.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
                 </select>
               </label>
               <label className="inventory-form-wide"><span>Product</span><input value={`${transferRow.name}${transferRow.job_id ? ` · ${transferRow.job_id}` : ''}`} disabled /></label>
@@ -753,6 +776,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
               </label>
             </div>
 
+            {transferDestinations.length === 0 && <p className="inventory-state inventory-state-error">No other active store is available to receive this transfer.</p>}
             {transferQuantity > transferRow.quantity && <p className="inventory-state inventory-state-error">Only {transferRow.quantity} unit{transferRow.quantity === 1 ? '' : 's'} are available.</p>}
             {error && <p className="inventory-state inventory-state-error">{error}</p>}
 
