@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createBuyback, createCustomer, listBuybacks, listCustomers, listStores, type ApiBuyback, type ApiCustomer, type ApiStore, type BuybackCondition } from "../services/api";
 import type { User } from "../types";
 import { formatDateTime } from "../utils/dateFormat";
+import { useStoreSelection } from "../context/StoreSelectionContext";
 import "./Buyback.css";
 
 const conditions: BuybackCondition[] = ["Excellent", "Good", "Fair", "Poor"];
@@ -26,15 +27,46 @@ const Buyback: React.FC<{ user: User }> = ({ user }) => {
   const update = (key: string, value: any) => setForm((old: any) => ({ ...old, [key]: value }));
   const toggleMap = (section: string, key: string) => update(section, { ...form[section], [key]: !form[section][key] });
 
+  // The header's store picker scopes this page, exactly as it does Inventory.
+  // A specific store is pushed to the API so the records never leave the
+  // server; "All Stores" keeps the consolidated list, with every record
+  // labelled by the store holding the device.
+  const { selectedStoreId: headerStoreId, isAllStores } = useStoreSelection();
+  const scopedStoreId = user.role === "Admin"
+    ? (isAllStores ? "" : headerStoreId)
+    : (user.assignedStoreId || "");
+  const isConsolidatedView = user.role === "Admin" && isAllStores;
+  const storeNameOf = (storeRef?: string | null) => stores.find((x) => x.id === storeRef)?.name || "Unassigned";
+  const scopeLabel = isConsolidatedView ? `All Stores · ${stores.length} stores` : storeNameOf(scopedStoreId);
+
   const load = async () => {
-    const [customerRows, storeRows, buybacks] = await Promise.all([listCustomers(), listStores(), listBuybacks()]);
+    const [customerRows, storeRows, buybacks] = await Promise.all([
+      listCustomers(),
+      listStores(),
+      listBuybacks(scopedStoreId || undefined),
+    ]);
     const active = storeRows.filter((x) => x.is_active); setCustomers(customerRows); setStores(active); setRows(buybacks);
-    update("store", form.store || user.assignedStoreId || active[0]?.id || "");
   };
-  useEffect(() => { void load().catch((e) => setNotice({ error: e.message, success: "" })); }, []);
+  useEffect(() => { void load().catch((e) => setNotice({ error: e.message, success: "" })); }, [scopedStoreId]);
+
+  // New devices are booked into exactly one store: the one on screen, or an
+  // explicit choice while every store is shown at once.
+  useEffect(() => {
+    if (isConsolidatedView) {
+      setForm((old: any) => ({ ...old, store: stores.some((x) => x.id === old.store) ? old.store : "" }));
+      return;
+    }
+    setForm((old: any) => ({ ...old, store: scopedStoreId }));
+  }, [isConsolidatedView, scopedStoreId, stores]);
 
   const finalValuation = Math.max(0, Number(form.marketValue || 0) - Number(form.conditionDeduction || 0));
-  const filtered = useMemo(() => rows.filter((row) => `${row.job_no} ${row.imei} ${row.customer_name} ${row.brand} ${row.model}`.toLowerCase().includes(search.toLowerCase()) && (!conditionFilter || row.condition === conditionFilter)), [rows, search, conditionFilter]);
+  const filtered = useMemo(() => rows.filter((row) =>
+    `${row.job_no} ${row.imei} ${row.customer_name} ${row.brand} ${row.model}`.toLowerCase().includes(search.toLowerCase())
+    && (!conditionFilter || row.condition === conditionFilter)
+    // Belt and braces: the API is already scoped, but a stale row from a
+    // previous selection must never linger in the list.
+    && (!scopedStoreId || row.store_ref === scopedStoreId)
+  ), [rows, search, conditionFilter, scopedStoreId]);
 
   const save = async (print = false) => {
     try {
@@ -54,28 +86,29 @@ const Buyback: React.FC<{ user: User }> = ({ user }) => {
         exchange_credit_amount: String(form.exchange), payout_method: form.payoutMethod, rack_location: form.rack, inspection_notes: form.inspectionNotes, pricing_notes: form.pricingNotes, notes: form.notes, status: form.status,
         inventory_status: form.inventoryStatus,
       });
-      setRows((old) => [created, ...old]); setSelected(created); setNotice({ error: "", success: "Buyback saved. Used phone is now available in Inventory and POS." });
+      setRows((old) => [created, ...old]); setSelected(created); setNotice({ error: "", success: `Buyback saved to ${storeNameOf(form.store)}. Used phone is now available in Inventory and POS.` });
       setForm({ ...initial, store: form.store }); window.dispatchEvent(new CustomEvent("inventory:changed"));
       if (print) window.print();
     } catch (e) { setNotice({ error: e instanceof Error ? e.message : "Failed to save buyback", success: "" }); } finally { setSaving(false); }
   };
 
   return <div className="buyback-page">
-    <header className="module-header buyback-header"><div><h1>Buyback Inventory</h1><p>Manage acquired used devices, repair status and resale availability.</p></div><span>{filtered.length} devices</span></header>
+    <header className="module-header buyback-header"><div><h1>Buyback Inventory</h1><p>Manage acquired used devices, repair status and resale availability.</p></div><div className="bb-header-meta"><span className="bb-scope-chip" title="Set by the store picker in the header">{scopeLabel}</span><span>{filtered.length} devices</span></div></header>
+    <p className="bb-scope-note">Showing buybacks for <strong>{scopeLabel}</strong>. {isConsolidatedView ? "Use the store picker in the header to narrow this to one store." : "Every device below belongs to this store."}</p>
     {(notice.error || notice.success) && <p className={`buyback-notice ${notice.error ? "error" : "success"}`}>{notice.error || notice.success}</p>}
     <section className="buyback-toolbar"><input placeholder="Search job, IMEI, customer, brand or model" value={search} onChange={(e) => setSearch(e.target.value)} /><select value={conditionFilter} onChange={(e) => setConditionFilter(e.target.value)}><option value="">All Conditions</option>{conditions.map((x) => <option key={x}>{x}</option>)}</select><select value={form.customer} onChange={(e) => { const c = customers.find((x) => x.id === e.target.value); setForm({ ...form, customer: e.target.value, customerName: c?.name || "", phone: c?.phone || "", email: c?.email || "" }); }}><option value="">New Customer</option>{customers.map((x) => <option value={x.id} key={x.id}>{x.name} - {x.phone}</option>)}</select></section>
     <div className="bb-layout"><main>
-      <Section title="Essential Details" summary="Customer, device, store and price" open><div className="buyback-grid">{[["customerName","Customer Name"],["phone","Mobile Number"],["email","Email (Optional)"],["brand","Brand"],["model","Model"],["imei","IMEI"],["color","Color"],["storage","Storage"],["ram","RAM"],["jobNo","Job Number"],["buybackPrice","Buyback Price"],["sellingPrice","Selling Price"]].map(([key,label]) => <label key={key}>{label}<input value={form[key]} onChange={(e) => update(key, key === "imei" ? e.target.value.replace(/\D/g,"").slice(0,15) : e.target.value)} /></label>)}<label>Condition<select value={form.condition} onChange={(e) => update("condition",e.target.value)}>{conditions.map((x)=><option key={x}>{x}</option>)}</select></label><label>Store<select value={form.store} onChange={(e)=>update("store",e.target.value)} disabled={user.role!=="Admin"}>{stores.map((x)=><option value={x.id} key={x.id}>{x.name}</option>)}</select></label></div></Section>
+      <Section title="Essential Details" summary="Customer, device, store and price" open><div className="buyback-grid">{[["customerName","Customer Name"],["phone","Mobile Number"],["email","Email (Optional)"],["brand","Brand"],["model","Model"],["imei","IMEI"],["color","Color"],["storage","Storage"],["ram","RAM"],["jobNo","Job Number"],["buybackPrice","Buyback Price"],["sellingPrice","Selling Price"]].map(([key,label]) => <label key={key}>{label}<input value={form[key]} onChange={(e) => update(key, key === "imei" ? e.target.value.replace(/\D/g,"").slice(0,15) : e.target.value)} /></label>)}<label>Condition<select value={form.condition} onChange={(e) => update("condition",e.target.value)}>{conditions.map((x)=><option key={x}>{x}</option>)}</select></label><label>Store<select value={form.store} onChange={(e)=>update("store",e.target.value)} disabled={!isConsolidatedView}>{isConsolidatedView && <option value="">Select store</option>}{stores.map((x)=><option value={x.id} key={x.id}>{x.name}</option>)}</select></label></div></Section>
       <Section title="Physical Inspection" summary="Screen, body, camera and buttons"><div className="buyback-grid">{["screen_condition","back_panel_condition","frame_body_condition","camera_condition","buttons_condition"].map((key)=><label key={key}>{labels(key)}<select value={form.physical[key]||"good"} onChange={(e)=>update("physical",{...form.physical,[key]:e.target.value})}><option>excellent</option><option>good</option><option>fair</option><option>poor</option></select></label>)}</div></Section>
       <Section title="Functional Inspection" summary="Touch-friendly working checks"><div className="bb-checks">{checks.map((key)=><label key={key} className={form.functional[key]?"checked":""}><input type="checkbox" checked={!!form.functional[key]} onChange={()=>toggleMap("functional",key)}/>{labels(key)}</label>)}</div></Section>
       <Section title="Damage Detection" summary="Record visible or known damage"><div className="bb-checks danger">{damages.map((key)=><label key={key} className={form.damage[key]?"checked":""}><input type="checkbox" checked={!!form.damage[key]} onChange={()=>toggleMap("damage",key)}/>{labels(key)}</label>)}</div></Section>
       <Section title="Accessories Received" summary="Box, charger and included items"><div className="bb-checks"><label className={form.box?"checked":""}><input type="checkbox" checked={form.box} onChange={()=>update("box",!form.box)}/>Box Available</label><label className={form.charger?"checked":""}><input type="checkbox" checked={form.charger} onChange={()=>update("charger",!form.charger)}/>Charger Available</label></div><label className="bb-wide">Other Accessories<input value={form.accessories} onChange={(e)=>update("accessories",e.target.value)} placeholder="Cable, case, invoice..." /></label></Section>
       <Section title="Pricing & Valuation" summary={`Final valuation: Rs ${finalValuation.toLocaleString()}`}><div className="buyback-grid">{[["marketValue","Market Value"],["conditionDeduction","Condition Deduction"],["buybackPrice","Negotiated Buyback Price"],["sellingPrice","Suggested Resale Price"]].map(([key,label])=><label key={key}>{label}<input type="number" value={form[key]} onChange={(e)=>update(key,e.target.value)}/></label>)}</div><div className="bb-value">Final Valuation <strong>Rs {finalValuation.toLocaleString()}</strong></div></Section>
       <Section title="Payout Details" summary="Cash, online, exchange and method"><div className="buyback-grid"><label>Payout Method<select value={form.payoutMethod} onChange={(e)=>update("payoutMethod",e.target.value)}><option value="cash">Cash</option><option value="upi">UPI</option><option value="bank_transfer">Bank Transfer</option><option value="partial">Mixed</option></select></label>{[["cash","Cash Amount"],["online","Online Amount"],["exchange","Exchange Credit"]].map(([key,label])=><label key={key}>{label}<input type="number" value={form[key]} onChange={(e)=>update(key,e.target.value)}/></label>)}</div></Section>
-      <Section title="Workflow & Store Assignment" summary={`Current stage, availability and inventory destination`}><div className="buyback-grid"><label>Workflow Status<select value={form.status} onChange={(e)=>update("status",e.target.value)}><option>Pending</option><option>Accepted</option><option>Processed</option><option>Rejected</option></select></label><label>Availability<select className={form.inventoryStatus==="under_repair"?"bb-status-repair":"bb-status-ready"} value={form.inventoryStatus} onChange={(e)=>update("inventoryStatus",e.target.value)}><option value="ready">🟢 Ready for Sale</option><option value="under_repair">🔴 Under Repair</option></select></label><label>Assigned Store<select value={form.store} onChange={(e)=>update("store",e.target.value)} disabled={user.role!=="Admin"}>{stores.map((x)=><option value={x.id} key={x.id}>{x.name}</option>)}</select></label><label>Rack Location<input value={form.rack} onChange={(e)=>update("rack",e.target.value)}/></label></div><p className="bb-help">{form.inventoryStatus==="under_repair"?"Under Repair devices stay visible in POS but are marked in red and cannot be added to a bill until they are marked Ready for Sale.":"Ready for Sale devices appear in POS and can be sold immediately."} The assigned store controls where the used phone appears in Inventory and POS.</p></Section>
+      <Section title="Workflow & Store Assignment" summary={`Current stage, availability and inventory destination`}><div className="buyback-grid"><label>Workflow Status<select value={form.status} onChange={(e)=>update("status",e.target.value)}><option>Pending</option><option>Accepted</option><option>Processed</option><option>Rejected</option></select></label><label>Availability<select className={form.inventoryStatus==="under_repair"?"bb-status-repair":"bb-status-ready"} value={form.inventoryStatus} onChange={(e)=>update("inventoryStatus",e.target.value)}><option value="ready">🟢 Ready for Sale</option><option value="under_repair">🔴 Under Repair</option></select></label><label>Assigned Store<select value={form.store} onChange={(e)=>update("store",e.target.value)} disabled={!isConsolidatedView}>{isConsolidatedView && <option value="">Select store</option>}{stores.map((x)=><option value={x.id} key={x.id}>{x.name}</option>)}</select></label><label>Rack Location<input value={form.rack} onChange={(e)=>update("rack",e.target.value)}/></label></div><p className="bb-help">{form.inventoryStatus==="under_repair"?"Under Repair devices stay visible in POS but are marked in red and cannot be added to a bill until they are marked Ready for Sale.":"Ready for Sale devices appear in POS and can be sold immediately."} The assigned store controls where the used phone appears in Inventory and POS.</p></Section>
       <Section title="Assignment & Notes" summary="Rack location and complete notes"><div className="buyback-grid"><label>Rack Location<input value={form.rack} onChange={(e)=>update("rack",e.target.value)}/></label><label>Battery Health<input type="number" min="0" max="100" value={form.battery} onChange={(e)=>update("battery",e.target.value)}/></label><label>Serial Number<input value={form.serial} onChange={(e)=>update("serial",e.target.value)}/></label><label className="wide">Inspection Notes<textarea value={form.inspectionNotes} onChange={(e)=>update("inspectionNotes",e.target.value)}/></label><label className="wide">Pricing Notes<textarea value={form.pricingNotes} onChange={(e)=>update("pricingNotes",e.target.value)}/></label><label className="wide">General Notes<textarea value={form.notes} onChange={(e)=>update("notes",e.target.value)}/></label></div></Section>
-      <div className="buyback-actions"><button onClick={()=>setForm({...initial,store:form.store})}>Cancel</button><button onClick={()=>void save(true)} disabled={saving}>Save & Print</button><button className="primary" onClick={()=>void save()} disabled={saving}>{saving?"Saving...":"Save Buyback"}</button></div>
-    </main><aside className="bb-side"><h2>Device History</h2>{selected?<><div className="bb-selected"><span className="used-tag">USED PHONE</span><h3>{selected.brand} {selected.model}</h3><p>{selected.job_no || selected.imei}</p><dl><div><dt>Condition</dt><dd>{selected.condition}</dd></div><div><dt>Availability</dt><dd><span className={`bb-avail ${selected.inventory_status==="under_repair"?"repair":"ready"}`}>{selected.inventory_status==="under_repair"?"🔴 Under Repair":"🟢 Ready for Sale"}</span></dd></div><div><dt>Store</dt><dd>{stores.find((x)=>x.id===selected.store_ref)?.name||"-"}</dd></div><div><dt>Buyback</dt><dd>Rs {Number(selected.negotiated_price).toLocaleString()}</dd></div><div><dt>Created</dt><dd>{formatDateTime(selected.created_at)}</dd></div></dl></div></>:<p className="empty">Select a device below to view its history.</p>}<h2>Recent Buybacks</h2><div className="bb-recent">{filtered.slice(0,12).map((row)=><button key={row.id} onClick={()=>setSelected(row)}><strong>{row.brand} {row.model}</strong><span>{row.job_no||row.imei} · {row.condition}</span><span className={`bb-avail ${row.inventory_status==="under_repair"?"repair":"ready"}`}>{row.inventory_status==="under_repair"?"🔴 Under Repair":"🟢 Ready for Sale"}</span></button>)}{filtered.length===0 && <p className="empty">No buyback devices yet.</p>}</div></aside></div>
+      <div className="buyback-actions"><button onClick={()=>setForm({...initial,store:form.store})}>Cancel</button><button onClick={()=>void save(true)} disabled={saving||!form.store}>Save & Print</button><button className="primary" onClick={()=>void save()} disabled={saving||!form.store}>{saving?"Saving...":"Save Buyback"}</button></div>
+    </main><aside className="bb-side"><h2>Device History</h2>{selected?<><div className="bb-selected"><span className="used-tag">USED PHONE</span><h3>{selected.brand} {selected.model}</h3><p>{selected.job_no || selected.imei}</p><dl><div><dt>Condition</dt><dd>{selected.condition}</dd></div><div><dt>Availability</dt><dd><span className={`bb-avail ${selected.inventory_status==="under_repair"?"repair":"ready"}`}>{selected.inventory_status==="under_repair"?"🔴 Under Repair":"🟢 Ready for Sale"}</span></dd></div><div><dt>Store</dt><dd>{stores.find((x)=>x.id===selected.store_ref)?.name||"-"}</dd></div><div><dt>Buyback</dt><dd>Rs {Number(selected.negotiated_price).toLocaleString()}</dd></div><div><dt>Created</dt><dd>{formatDateTime(selected.created_at)}</dd></div></dl></div></>:<p className="empty">Select a device below to view its history.</p>}<h2>Recent Buybacks</h2><div className="bb-recent">{filtered.slice(0,12).map((row)=><button key={row.id} onClick={()=>setSelected(row)}><strong>{row.brand} {row.model}</strong><span>{row.job_no||row.imei} · {row.condition}</span><span className="bb-row-store">{storeNameOf(row.store_ref)}</span><span className={`bb-avail ${row.inventory_status==="under_repair"?"repair":"ready"}`}>{row.inventory_status==="under_repair"?"🔴 Under Repair":"🟢 Ready for Sale"}</span></button>)}{filtered.length===0 && <p className="empty">No buyback devices for {scopeLabel} yet.</p>}</div></aside></div>
   </div>;
 };
 export default Buyback;

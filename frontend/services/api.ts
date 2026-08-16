@@ -2045,8 +2045,10 @@ function toBuybackPayload(payload: Partial<CreateBuybackPayload> & { status?: Bu
   };
 }
 
-export async function listBuybacks(): Promise<ApiBuyback[]> {
-  const result = await apiRequest<{ rows: ApiBuyback[] }>("/buybacks");
+/** Omit `storeId` for the consolidated view; non-admins are scoped server-side. */
+export async function listBuybacks(storeId?: string): Promise<ApiBuyback[]> {
+  const query = storeId ? `?store_id=${encodeURIComponent(storeId)}` : "";
+  const result = await apiRequest<{ rows: ApiBuyback[] }>(`/buybacks${query}`);
   return result.rows.map(normalizeBuybackRow);
 }
 

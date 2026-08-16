@@ -108,12 +108,34 @@ const buybackIdParamsSchema = z.object({
   buybackId: objectIdSchema,
 });
 
+const listBuybacksQuerySchema = z.object({
+  store_id: objectIdSchema.optional(),
+});
+
 export async function listBuybacksHandler(req, res, next) {
   try {
-    const storeId = isAdmin(req.auth) ? undefined : req.auth?.store_id;
+    const query = listBuybacksQuerySchema.parse(req.query);
+    // Everyone but an admin stays pinned to their own store. An admin may
+    // narrow the list to one store with ?store_id=; omitting it keeps the
+    // consolidated view.
+    let storeId = req.auth?.store_id;
+    if (isAdmin(req.auth)) {
+      storeId = query.store_id;
+      if (storeId) assertStoreAccess(req.auth, storeId);
+    }
     const rows = await listBuybacks({ storeId });
     res.status(200).json({ rows });
   } catch (error) {
+    if (error instanceof z.ZodError) {
+      next(
+        new HttpError(
+          400,
+          error.issues[0]?.message || "Invalid request",
+          "VALIDATION_ERROR",
+        ),
+      );
+      return;
+    }
     next(error);
   }
 }

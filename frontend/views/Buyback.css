@@ -12,3 +12,13 @@
 .buyback-grid select.bb-status-repair{border-color:var(--color-error-500);background:var(--status-error-bg);color:var(--status-error-text);font-weight:800}
 .buyback-grid select.bb-status-ready{border-color:var(--color-success-500);background:var(--status-success-bg);color:var(--status-success-text);font-weight:800}
 .bb-help{margin:10px 0 0;color:var(--text-secondary);font-size:11px;font-weight:700;line-height:1.5}
+
+/* Store context: which store this page is scoped to, and which store each
+   record belongs to. Both follow the store picker in the app header. */
+.bb-header-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.bb-header-meta>span{padding:6px 12px;border-radius:999px;background:var(--bg-secondary);border:1px solid var(--border-color);color:var(--text-secondary);font-size:11px;font-weight:800;white-space:nowrap}
+.bb-header-meta>.bb-scope-chip{color:var(--text-primary)}
+.bb-scope-note{margin:0;padding:9px 12px;border:1px solid var(--border-color);border-radius:7px;background:var(--bg-primary);color:var(--text-secondary);font-size:11px;font-weight:700}
+.bb-scope-note strong{color:var(--text-primary)}
+.bb-recent .bb-row-store{color:var(--text-tertiary);font-size:10px;font-weight:850;text-transform:uppercase;letter-spacing:.03em}
+@media print{.bb-scope-note{display:none!important}}
