@@ -3,7 +3,6 @@ import { User } from '../types';
 import { getCurrentUser, login, setAuthToken, setSessionUser } from '../services/api';
 import LogoShield from '../components/LogoShield';
 import AuthInput from '../components/AuthInput';
-import Toast from '../components/Toast';
 import './Login.css';
 
 interface LoginProps {
@@ -15,14 +14,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [toasts, setToasts] = useState<{ id: number; msg: string; type?: 'success' | 'error' }[]>([]);
   const [showPassword, setShowPassword] = useState(false);
-
-  const pushToast = (msg: string, type: 'success' | 'error' = 'success') => {
-    const id = Date.now();
-    setToasts((state) => [...state, { id, msg, type }]);
-    setTimeout(() => setToasts((state) => state.filter((toast) => toast.id !== id)), 3200);
-  };
 
   const handleLogin = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -42,9 +34,9 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
       setSessionUser(me);
       onLogin(me as User);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Login failed.';
-      setError(message);
-      pushToast(message, 'error');
+      // Reported inline only — the same channel the field validations above
+      // use, so a failed sign-in never surfaces twice.
+      setError(err instanceof Error ? err.message : 'Login failed.');
     } finally {
       setIsLoading(false);
     }
@@ -90,7 +82,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
               right={<button type="button" className="icon-btn" onClick={() => setShowPassword((state) => !state)}>{showPassword ? 'Hide' : 'Show'}</button>}
             />
 
-            {error && <p style={{ margin: 0, color: 'var(--error-red)', fontWeight: 700 }}>{error}</p>}
+            {error && <p role="alert" style={{ margin: 0, color: 'var(--error-red)', fontWeight: 700 }}>{error}</p>}
 
             <div>
               <button type="submit" disabled={isLoading} className="auth-submit">
@@ -99,12 +91,6 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
             </div>
           </form>
         </section>
-      </div>
-
-      <div className="toast-viewport">
-        {toasts.map((toast) => (
-          <Toast key={toast.id} message={toast.msg} type={toast.type === 'error' ? 'error' : 'success'} onClose={() => setToasts((state) => state.filter((item) => item.id !== toast.id))} />
-        ))}
       </div>
     </div>
   );
