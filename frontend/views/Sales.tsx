@@ -66,6 +66,17 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
   const employees = useMemo(() => [...new Set(sales.map((sale) => sale.employee_name).filter(Boolean))].sort(), [sales]);
   const paymentMethods = useMemo(() => [...new Set(sales.map((sale) => sale.payment_method).filter(Boolean))].sort(), [sales]);
 
+  // Only an admin may look across stores. Everyone else is pinned to their
+  // assignment — the API already scopes /sales to their store — so they get a
+  // read-only label instead of a dropdown that offers an "All Stores" view.
+  const canFilterByStore = user.role === 'Admin';
+  const assignedStoreName = useMemo(() => {
+    if (canFilterByStore) return '';
+    return stores.find((store) => String(store.id) === String(user.assignedStoreId))?.name
+      || sales.find((sale) => sale.store_name)?.store_name
+      || 'Assigned Store';
+  }, [canFilterByStore, sales, stores, user.assignedStoreId]);
+
   const filteredRows = useMemo(() => {
     const query = search.trim().toLowerCase();
     const from = fromDate ? new Date(`${fromDate}T00:00:00`) : null;
@@ -118,7 +129,9 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
 
       <section className="sales-filters">
         <label className="sales-search"><span className="material-icons">search</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search sale ID, job number, IMEI, customer or product" /></label>
-        <select value={storeFilter} onChange={(event) => setStoreFilter(event.target.value)} disabled={user.role !== 'Admin'}><option value="all">All Stores</option>{stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select>
+        {canFilterByStore
+          ? <select value={storeFilter} onChange={(event) => setStoreFilter(event.target.value)}><option value="all">All Stores</option>{stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select>
+          : <span className="sales-store-scope" title="You can only view sales for your assigned store"><span className="material-icons">store</span>{assignedStoreName}</span>}
         <select value={employeeFilter} onChange={(event) => setEmployeeFilter(event.target.value)}><option value="all">All Employees</option>{employees.map((employee) => <option key={employee} value={employee}>{employee}</option>)}</select>
         <select value={paymentFilter} onChange={(event) => setPaymentFilter(event.target.value)}><option value="all">All Payments</option>{paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}</select>
         <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All Statuses</option><option value="paid">Paid</option><option value="partial">Partial</option><option value="pending">Pending</option></select>
