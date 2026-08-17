@@ -538,19 +538,29 @@ export async function getDashboardSummary(options = {}) {
       recentlyTransferred:ledger.filter((x) => x.movementType.startsWith("transfer")).length,
     },
     storePerformance,
-    recentSales: recentSales.map((sale) => ({
-      id:          String(sale._id),
-      jobNumber:   sale.items[0]?.product?.jobId || sale.jobNumber || sale.saleNo,
-      product:     sale.items[0]?.product?.name || "",
-      customer:    sale.customer?.fullName || "Walk-in",
-      store:       sale.store?.name || "",
-      salesman:    sale.salespersonName || "",
-      amount:      sale.grandTotal,
-      grossAmount: sale.originalAmount || sale.grandTotal,
-      status:      sale.paymentStatus || "",
-      wasAdjusted: Boolean(sale.priceAdjustmentTotal > 0),
-      time:        sale.createdAt,
-    })),
+    recentSales: recentSales.map((sale) => {
+      // Show what the sale is still worth, not what it was billed at. The
+      // Revenue KPI above has already had retrievals netted out of it, so a
+      // partially retrieved bill listed here at its original total would make
+      // the panel contradict the headline figure it is supposed to itemise.
+      const retrieved = money(sale.retrievedTotal);
+      return {
+        id:          String(sale._id),
+        jobNumber:   sale.items[0]?.product?.jobId || sale.jobNumber || sale.saleNo,
+        product:     sale.items[0]?.product?.name || "",
+        customer:    sale.customer?.fullName || "Walk-in",
+        store:       sale.store?.name || "",
+        salesman:    sale.salespersonName || "",
+        amount:      Math.max(0, money(sale.grandTotal) - retrieved),
+        grossAmount: Math.max(0, money(sale.originalAmount || sale.grandTotal) - money(sale.retrievedOriginalTotal)),
+        billedAmount: money(sale.grandTotal),
+        retrievedAmount: retrieved,
+        partiallyRetrieved: sale.status === "partially_retrieved",
+        status:      sale.paymentStatus || "",
+        wasAdjusted: Boolean(sale.priceAdjustmentTotal > 0),
+        time:        sale.createdAt,
+      };
+    }),
     alerts: [
       { type: "Low stock",               count: lowStockCount,                                      action: "Review inventory" },
       { type: "Transfers this period",   count: transfers,                                          action: "Review transfers" },

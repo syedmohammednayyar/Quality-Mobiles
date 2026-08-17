@@ -253,8 +253,14 @@ async function syncBuybackInventoryStatus(buyback, session) {
   const nextInventoryStatus = buyback.inventoryStatus === "under_repair" ? "under_repair" : "ready";
   const productObjectId = new mongoose.Types.ObjectId(buyback.inventoryProduct);
 
+  // Never override a device that has already been sold — the same rule the
+  // SerializedInventory update below has always applied, which Product was
+  // missing. Rewriting a sold product's status here left the device recorded as
+  // sold on the sales side and sellable on the product side, and a later
+  // retrieval then had no "sold" status left to recognise, so the sale kept
+  // counting towards revenue after the device came back.
   await Product.updateOne(
-    { _id: productObjectId },
+    { _id: productObjectId, inventoryStatus: { $ne: "sold" } },
     { $set: { inventoryStatus: nextInventoryStatus, updatedAt: new Date() } },
     { session },
   );

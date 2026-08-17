@@ -406,11 +406,21 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
 
     try {
       setError('');
-      await updateProduct(row.product_id, payload);
-      setStatusMessage('Change saved and recorded in the audit history.');
+      const saved = await updateProduct(row.product_id, payload);
+      // Returning a sold device to stock reverses its sale line, which moves
+      // revenue on the Dashboard and Sales History. Say so — a silent "saved"
+      // left staff unable to tell whether the money had come back off.
+      const reversed = saved.retrieval;
+      setStatusMessage(reversed
+        ? `Change saved. Sale ${reversed.saleNo} reduced by Rs ${Math.round(reversed.retrievedAmount).toLocaleString()} — Dashboard revenue and Sales History have been updated.`
+        : 'Change saved and recorded in the audit history.');
       setPendingEdit(null);
       setRemarkText('');
       await loadInventory(viewStoreIds);
+      // A retrieval moves sales figures, not just stock. This page reloads its
+      // own rows above, but nothing else announces the sales-side change, so a
+      // screen listening for it would otherwise keep pre-reversal totals.
+      if (reversed) window.dispatchEvent(new CustomEvent('sales:changed', { detail: { saleId: reversed.saleId } }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save change');
     }

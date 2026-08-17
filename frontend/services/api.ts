@@ -71,6 +71,16 @@ export interface ApiProduct {
   device_notes?: string;
   inventory_mode?: "serialized" | "bulk";
   active: boolean;
+  // Present only on the response to an update that returned a sold device to
+  // stock: which sale was reduced, and by how much. Lets the caller state what
+  // moved on the dashboard rather than leaving the user to check.
+  retrieval?: {
+    saleId: string;
+    saleNo: string;
+    status: "retrieved" | "partially_retrieved";
+    retrievedAmount: number;
+    fullyRetrieved: boolean;
+  };
 }
 
 export interface ApiStoreInventoryRow {
@@ -920,7 +930,10 @@ export interface DashboardSummary {
   revenueBreakdown: Array<{ key: string; label: string; amount: number; percent: number }>;
   inventoryAlerts: Array<{ id: string; product: string; sku: string; brand: string; store: string; quantity: number; minStockLevel: number; severity: "low_stock" | "out_of_stock" }>;
   storePerformance: Array<{ storeId: string; store: string; revenue: number; sales: number; inventoryValue: number; lossAmount?: number }>;
-  recentSales: Array<{ id: string; jobNumber: string; product: string; customer: string; store: string; salesman: string; amount: number; status: string; time: string }>;
+  // `amount` is net of anything retrieved off the bill, so this list can never
+  // total more than the Revenue KPI it itemises; `billedAmount` keeps the
+  // original figure for the rows that were reduced.
+  recentSales: Array<{ id: string; jobNumber: string; product: string; customer: string; store: string; salesman: string; amount: number; status: string; time: string; billedAmount?: number; retrievedAmount?: number; partiallyRetrieved?: boolean }>;
   activity: Array<{ activity: string; detail: string; user: string; time: string }>;
   alerts: Array<{ type: string; count: number; action: string }>;
   // ── Loss Management ──────────────────────────────────────────────────────

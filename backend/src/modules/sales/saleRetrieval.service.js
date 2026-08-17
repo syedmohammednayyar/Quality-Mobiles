@@ -46,6 +46,39 @@ export function lineContribution(item) {
 }
 
 /**
+ * Is this product edit a retrieval — a sold device coming back into sellable
+ * stock — and therefore something the originating sale has to be told about?
+ *
+ * `Product.inventoryStatus === "sold"` cannot be the only signal, and that was
+ * the bug: the stored status drifts away from "sold" while the device is still
+ * sold (a buyback edit rewrites it, older rows predate the field), and the
+ * Inventory grid does not read it either — it labels any row with no stock on
+ * hand as "Sold". So the grid would show "Sold", the admin would set it back to
+ * "Ready for Sale", stock would be restored, and the sale would be left counting
+ * its money because the stored string never said "sold".
+ *
+ * Both halves of "was sold" are therefore accepted, and both halves of "is
+ * sellable again" are required, which is what keeps the gate from firing on an
+ * unrelated status edit to a product that still has real stock on the shelf.
+ *
+ * @param {object}  change
+ * @param {string}  change.statusBefore   Product.inventoryStatus before the edit.
+ * @param {string}  change.statusAfter    Product.inventoryStatus after the edit.
+ * @param {?number} change.stockBefore    Units on hand before the edit.
+ * @param {?number} change.stockAfter     Units on hand after the edit.
+ * @param {boolean} change.inventoryEdited Whether status/stock were part of this edit at all.
+ */
+export function isSaleRetrieval({ statusBefore, statusAfter, stockBefore, stockAfter, inventoryEdited }) {
+  // A price or name edit never returns a device to stock, whatever the status
+  // happens to be, so it must never reverse a sale.
+  if (!inventoryEdited) return false;
+
+  const wasSold    = statusBefore === "sold" || money(stockBefore) <= 0;
+  const isSellable = statusAfter !== "sold" && money(stockAfter) > 0;
+  return wasSold && isSellable;
+}
+
+/**
  * Find the sale line a retrieval should reverse: the most recent still-live
  * line for this product in this store. A product can be sold, retrieved and
  * sold again, so lines already stamped retrieved are skipped — retrieving

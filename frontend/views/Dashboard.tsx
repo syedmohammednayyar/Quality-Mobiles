@@ -388,7 +388,17 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
                 <td>{sale.customer}</td>
                 <td>{sale.store}</td>
                 <td>{sale.salesman || "-"}</td>
-                <td>{money(sale.amount)}</td>
+                {/* The amount is what the bill is still worth. Where a device
+                    was returned to stock, the original total is shown struck
+                    through so the reduction is visible rather than looking like
+                    the sale was billed at the lower figure all along. */}
+                <td>{money(sale.amount)}
+                  {sale.partiallyRetrieved && Number(sale.retrievedAmount || 0) > 0 && (
+                    <span className="dash-retrieved-note" title={`Rs ${Math.round(Number(sale.retrievedAmount)).toLocaleString()} retrieved and returned to stock`}>
+                      was {money(Number(sale.billedAmount || sale.amount))}
+                    </span>
+                  )}
+                </td>
                 <td>{sale.status || "-"}</td>
                 <td>{formatDateTime(sale.time)}</td>
               </tr>

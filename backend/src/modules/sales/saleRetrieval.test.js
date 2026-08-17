@@ -8,7 +8,7 @@ import {
   netOfRetrieved,
   revenueSaleMatch,
 } from "./saleStatus.js";
-import { lineContribution } from "./saleRetrieval.service.js";
+import { isSaleRetrieval, lineContribution } from "./saleRetrieval.service.js";
 
 describe("sale retrieval — a returned device stops counting as sold", () => {
   describe("which sales each query may see", () => {
@@ -113,6 +113,60 @@ describe("sale retrieval — a returned device stops counting as sold", () => {
     it("rounds to whole paise so repeated retrievals cannot drift", () => {
       const { net } = lineContribution({ effectiveSellingAmount: 33.333, taxAmount: 0.004, quantity: 1 });
       assert.equal(net, 33.34);
+    });
+  });
+
+  describe("recognising a product edit as a retrieval", () => {
+    const edit = (overrides) => isSaleRetrieval({
+      statusBefore: "sold",
+      statusAfter: "ready",
+      stockBefore: 0,
+      stockAfter: 1,
+      inventoryEdited: true,
+      ...overrides,
+    });
+
+    it("reverses the sale when a sold device is set back to Ready for Sale", () => {
+      assert.equal(edit({}), true);
+    });
+
+    // TEST 4 — the bug: Dashboard revenue kept the money because the stored
+    // status had drifted off "sold" (a buyback edit rewrites it, legacy rows
+    // never had it) even though the device really was sold and out of stock.
+    // The Inventory grid calls any zero-stock row "Sold", so returning one to
+    // the shelf has to reverse the sale whichever half recorded it.
+    it("reverses even when the stored status is not literally 'sold'", () => {
+      assert.equal(edit({ statusBefore: "ready" }), true);
+      assert.equal(edit({ statusBefore: "under_repair" }), true);
+      assert.equal(edit({ statusBefore: undefined }), true);
+    });
+
+    it("reverses a device coming back as held stock rather than sellable", () => {
+      assert.equal(edit({ statusAfter: "under_repair" }), true);
+    });
+
+    // The other half: a product that never left the shelf must keep its sale.
+    it("leaves a sale alone when the product still had real stock on hand", () => {
+      assert.equal(edit({ statusBefore: "under_repair", stockBefore: 5, stockAfter: 5 }), false);
+    });
+
+    it("leaves a sale alone when nothing comes back to the shelf", () => {
+      assert.equal(edit({ stockAfter: 0 }), false);
+    });
+
+    it("never treats marking a product sold as a retrieval", () => {
+      assert.equal(edit({ statusBefore: "ready", statusAfter: "sold", stockBefore: 1, stockAfter: 0 }), false);
+    });
+
+    // A price or name correction on a sold product is not a return to stock.
+    it("ignores edits that never touched status or stock", () => {
+      assert.equal(edit({ inventoryEdited: false }), false);
+      assert.equal(edit({ inventoryEdited: false, stockBefore: null, stockAfter: null }), false);
+    });
+
+    it("treats missing stock figures as no stock rather than crashing", () => {
+      assert.equal(edit({ stockBefore: null, stockAfter: null }), false);
+      assert.equal(edit({ stockBefore: undefined }), true);
     });
   });
 

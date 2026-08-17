@@ -5,7 +5,7 @@ import { HttpError } from "../../utils/httpError.js";
 import { toObjectId } from "../../utils/ids.js";
 import { writeAudit } from "../../utils/audit.js";
 import { nextSequence } from "../../utils/sequence.js";
-import { retrieveSoldProductLine } from "../sales/saleRetrieval.service.js";
+import { isSaleRetrieval, retrieveSoldProductLine } from "../sales/saleRetrieval.service.js";
 
 // Fields whose change is significant enough to require a remark and an audit entry.
 const AUDITED_FIELDS = ["unitPrice", "purchasePrice", "discount", "taxRate", "inventoryStatus", "isActive", "name", "brand", "model", "category"];
@@ -170,6 +170,23 @@ async function ensureIdentityUnique(input, excludeProductId) {
   await ensureUnique("barcode", input.barcode, "PRODUCT_DUPLICATE_BARCODE", "Barcode already exists", excludeProductId);
   await ensureUnique("imei", input.imei, "PRODUCT_DUPLICATE_IMEI", "IMEI already exists", excludeProductId);
   await ensureUnique("serialNumber", input.serialNumber, "PRODUCT_DUPLICATE_SERIAL", "Serial number already exists", excludeProductId);
+}
+
+/**
+ * Units of this product on hand in one store — BulkInventory first, then the
+ * legacy StoreInventory items array, which is the same pair (and order) that
+ * mapProduct and the Inventory grid read stock from. Keeping to that order
+ * matters here: this number is what decided the row read "Sold", so a different
+ * reading would disagree with what the user was looking at when they edited it.
+ */
+async function stockOnHand(session, storeId, productId) {
+  const bulk = await BulkInventory.findOne({ store: storeId, product: productId }).session(session).lean();
+  const bulkQuantity = Number(bulk?.quantity || 0);
+  if (bulkQuantity > 0) return bulkQuantity;
+
+  const legacy = await StoreInventory.findOne({ store: storeId, "items.product": productId }).session(session).lean();
+  const item = legacy?.items?.find((row) => String(row.product) === String(productId));
+  return Number(item?.quantity || 0);
 }
 
 async function upsertStoreInventory(session, storeId, productId, quantity, minStockLevel = 0) {
@@ -485,6 +502,13 @@ export async function updateProduct(productId, input) {
       if (inv) targetStore = inv.store.toString();
     }
 
+    // Stock on hand either side of this edit. Both are needed below to tell a
+    // retrieval (a device with nothing on hand coming back to the shelf) from
+    // an ordinary status edit on a product that never left it. They stay null
+    // when this edit did not touch stock or status at all.
+    let stockBefore = null;
+    let stockAfter  = null;
+
     if (hasInventoryUpdate) {
       if (!targetStore) {
         throw new HttpError(400, "Primary store is required to set stock quantity", "PRODUCT_STORE_REQUIRED_FOR_STOCK");
@@ -499,18 +523,18 @@ export async function updateProduct(productId, input) {
         // Coming back off "sold" restores one unit, but only when the row is
         // actually empty: a product that still holds real bulk stock must not
         // be silently reset to 1 just because its status was edited.
+        stockBefore = await stockOnHand(session, toObjectId(targetStore, "STORE_INVALID_ID"), product._id);
+
         let nextQuantity;
         if (input.stockQuantity !== undefined) {
           nextQuantity = Number(input.stockQuantity);
         } else if (input.inventoryStatus === "sold") {
           nextQuantity = 0;
         } else {
-          const existing = await BulkInventory.findOne({
-            store: toObjectId(targetStore, "STORE_INVALID_ID"),
-            product: product._id,
-          }).session(session).lean();
-          nextQuantity = Number(existing?.quantity || 0) > 0 ? Number(existing.quantity) : 1;
+          nextQuantity = stockBefore > 0 ? stockBefore : 1;
         }
+        stockAfter = nextQuantity;
+
         await upsertBulkInventory(
           session,
           toObjectId(targetStore, "STORE_INVALID_ID"),
@@ -529,30 +553,39 @@ export async function updateProduct(productId, input) {
       }
     }
 
-    // Coming back off "sold" is a retrieval: the device returns to sellable
-    // stock, so the sale it came from has to stop counting it as sold. Without
-    // this the two sides disagree — Inventory shows the phone as available
-    // while Sales History still reports the transaction as a plain completed
-    // sale and the money still lands in revenue.
+    // Coming back into sellable stock is a retrieval: the device returns to the
+    // shelf, so the sale it came from has to stop counting it as sold. Without
+    // this the two sides disagree — Inventory shows the phone as available while
+    // Sales History still reports a plain completed sale and the money still
+    // lands in Dashboard revenue.
     //
-    // Inventory was already restored above, so the sales side only reverses
-    // the sale line. A product that was never actually billed has no live sale
-    // line and simply reconciles to nothing.
-    const wasRetrieved = beforeSnapshot.inventoryStatus === "sold"
-      && input.inventoryStatus !== undefined
-      && product.inventoryStatus !== "sold";
+    // Inventory was already restored above, so the sales side only reverses the
+    // sale line. A product that was never actually billed has no live sale line
+    // and reconciles to nothing, which is why the gate can be generous about
+    // what counts as "was sold" without inventing reversals.
+    const wasRetrieved = isSaleRetrieval({
+      statusBefore:    beforeSnapshot.inventoryStatus,
+      statusAfter:     product.inventoryStatus,
+      stockBefore,
+      stockAfter,
+      inventoryEdited: input.inventoryStatus !== undefined || input.stockQuantity !== undefined,
+    });
 
-    if (wasRetrieved) {
-      await retrieveSoldProductLine({
+    const retrieval = wasRetrieved
+      ? await retrieveSoldProductLine({
         productId: product._id,
         storeId: targetStore ? toObjectId(targetStore, "STORE_INVALID_ID") : product.store,
         userId: input.userId,
         reason: remark,
         session,
-      });
-    }
+      })
+      : null;
 
-    return mapProduct(product, targetStore);
+    const mapped = await mapProduct(product, targetStore);
+    // Report the reversal back so the caller can say which sale was reduced and
+    // by how much, instead of leaving the user to guess whether the dashboard
+    // moved. Omitted entirely when nothing was reversed.
+    return retrieval ? { ...mapped, retrieval } : mapped;
   });
 }
 
