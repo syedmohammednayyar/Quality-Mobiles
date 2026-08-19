@@ -204,7 +204,22 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
 
     <section className="dash-kpis">
       {stockKpis.map(([key, label, isMoney]) => (
-        <article key={key}><span>{label}</span><strong>{isMoney ? money(summary.kpis[key]) : count(summary.kpis[key])}</strong></article>
+        <article key={key}>
+          <span>{label}</span>
+          <strong>{isMoney ? money(summary.kpis[key]) : count(summary.kpis[key])}</strong>
+          {/* Total Customers is counted by customer record, never by name, so
+              two people who share a name stay two customers. The breakdown is
+              shown because a bare number cannot be reconciled against Sales:
+              anonymous walk-in bills identify nobody and so add no customer. */}
+          {key === "totalCustomers" && (
+            <small className="dash-kpi-note dash-kpi-breakdown">
+              {count(summary.kpis.walkInCustomers)} walk-in &middot; {count(summary.kpis.referralCustomers)} referral
+              {Number(summary.kpis.anonymousWalkInSales || 0) > 0 && (
+                <> &middot; {count(summary.kpis.anonymousWalkInSales)} unnamed sale{Number(summary.kpis.anonymousWalkInSales) === 1 ? "" : "s"}</>
+              )}
+            </small>
+          )}
+        </article>
       ))}
     </section>
 
@@ -379,13 +394,14 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
       <article className="dash-card table-card">
         <div className="dash-card-head"><h2>Recent Sales - {scopeName}</h2><Link to="/sales">View All</Link></div>
         <table>
-          <thead><tr><th>Job Number</th><th>Product</th><th>Customer</th><th>Store</th><th>Salesman</th><th>Amount</th><th>Status</th><th>Time</th></tr></thead>
+          <thead><tr><th>Job Number</th><th>Product</th><th>Customer Type</th><th>Customer Name</th><th>Store</th><th>Salesman</th><th>Amount</th><th>Status</th><th>Time</th></tr></thead>
           <tbody>
             {summary.recentSales.map((sale) => (
               <tr key={sale.id}>
                 <td>{sale.jobNumber}</td>
                 <td>{sale.product}</td>
-                <td>{sale.customer}</td>
+                <td>{sale.customerType || "Walk-in"}</td>
+                <td>{sale.customer || <span className="dash-unnamed">Not recorded</span>}</td>
                 <td>{sale.store}</td>
                 <td>{sale.salesman || "-"}</td>
                 {/* The amount is what the bill is still worth. Where a device
@@ -403,7 +419,7 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
                 <td>{formatDateTime(sale.time)}</td>
               </tr>
             ))}
-            {summary.recentSales.length === 0 && <tr><td colSpan={8} className="dash-empty">No sales data available for {scopeName} in this period.</td></tr>}
+            {summary.recentSales.length === 0 && <tr><td colSpan={9} className="dash-empty">No sales data available for {scopeName} in this period.</td></tr>}
           </tbody>
         </table>
       </article>

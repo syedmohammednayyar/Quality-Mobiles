@@ -12,3 +12,9 @@
 /* A Recent Sales row whose bill was reduced by a retrieval — the struck-through
    original keeps the reduction visible next to the net figure. */
 .dash-retrieved-note{display:block;margin-top:3px;color:var(--status-warning-text);font-size:10px;font-weight:800;text-decoration:line-through}
+
+/* Total Customers shows the parts it is made of, so the KPI can be checked
+   against Sales History instead of being taken on trust. */
+.dash-kpi-breakdown{text-transform:none;letter-spacing:0;font-weight:750;color:var(--text-tertiary)}
+/* A sale that identified nobody: not a name, and not a customer type either. */
+.dash-unnamed{color:var(--text-tertiary);font-style:italic}

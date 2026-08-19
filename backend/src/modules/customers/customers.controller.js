@@ -16,6 +16,8 @@ const createCustomerSchema = z.object({
   email: z.string().email().optional().or(z.literal("")),
   phone: z.string().max(40).optional(),
   store_ref: objectIdSchema.nullable().optional(),
+  source_type: z.enum(["walk_in", "referred"]).optional(),
+  referred_by_employee_id: objectIdSchema.nullable().optional(),
 });
 
 const updateCustomerSchema = z.object({
@@ -23,6 +25,8 @@ const updateCustomerSchema = z.object({
   email: z.string().email().optional().or(z.literal("")),
   phone: z.string().max(40).optional(),
   store_ref: objectIdSchema.nullable().optional(),
+  source_type: z.enum(["walk_in", "referred"]).optional(),
+  referred_by_employee_id: objectIdSchema.nullable().optional(),
 });
 
 const customerIdParamsSchema = z.object({
@@ -48,6 +52,8 @@ export async function createCustomerHandler(req, res, next) {
       email: payload.email,
       phone: payload.phone,
       storeRef: payload.store_ref,
+      sourceType: payload.source_type,
+      referredByEmployee: payload.referred_by_employee_id,
     });
     res.status(201).json(row);
   } catch (error) {
@@ -79,6 +85,8 @@ export async function updateCustomerHandler(req, res, next) {
       email: payload.email,
       phone: payload.phone,
       storeRef: payload.store_ref,
+      sourceType: payload.source_type,
+      referredByEmployee: payload.referred_by_employee_id,
     });
 
     res.status(200).json(row);

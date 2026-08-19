@@ -11,6 +11,7 @@ import { nextSequence } from "../../utils/sequence.js";
 import { allocateEffectiveSellingAmounts, classifyLossType, computeCostBasis, evaluateLoss } from "../losses/lossCalculation.service.js";
 import { createLossRecordsForSale, reverseLossesForSale } from "../losses/losses.service.js";
 import { REVENUE_SALE_STATUSES, historySaleMatch } from "./saleStatus.js";
+import { customerFields } from "./customerIdentity.js";
 
 // ─── Money helpers ────────────────────────────────────────────────────────────
 
@@ -544,8 +545,10 @@ function mapSaleDetail(sale) {
     status:                sale.status,
     store_id:              sale.store?._id ? String(sale.store._id) : String(sale.store),
     store_name:            sale.store?.name || "",
-    customer_id:           sale.customer?._id ? String(sale.customer._id) : (sale.customer ? String(sale.customer) : null),
-    customer_name:         sale.customer?.fullName || "Walk-in",
+    // Type and name are separate attributes: a sale always has a type, and
+    // carries a name only when a customer record was linked. See
+    // customerIdentity.js for why "Walk-in" never appears as a name.
+    ...customerFields(sale),
     customer_phone:        sale.customer?.phone || "",
     employee_id:           sale.employee?._id ? String(sale.employee._id) : String(sale.employee),
     employee_name:         sale.employee?.fullName || sale.salespersonName || "",
@@ -652,7 +655,7 @@ export async function listSales(input) {
     id:              sale._id.toString(),
     sale_no:         sale.saleNo,
     customer:        sale.customer?._id?.toString?.() || null,
-    customer_name:   sale.customer?.fullName || "Walk-in",
+    ...customerFields(sale),
     store_ref:       sale.store?._id?.toString?.() || String(sale.store),
     store_name:      sale.store?.name || "",
     employee_id:     sale.employee?._id?.toString?.() || String(sale.employee),

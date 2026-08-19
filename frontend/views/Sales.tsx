@@ -23,6 +23,7 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
   const [employeeFilter, setEmployeeFilter] = useState('all');
   const [paymentFilter, setPaymentFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [customerTypeFilter, setCustomerTypeFilter] = useState('all');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [loading, setLoading] = useState(true);
@@ -91,16 +92,18 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
         item.product_name,
         item.brand,
         sale.customer_name,
+        sale.customer_type_label,
       ].some((value) => String(value || '').toLowerCase().includes(query));
       return searchOk
         && (storeFilter === 'all' || sale.store_ref === storeFilter)
         && (employeeFilter === 'all' || sale.employee_name === employeeFilter)
         && (paymentFilter === 'all' || sale.payment_method === paymentFilter)
         && (statusFilter === 'all' || sale.payment_status === statusFilter)
+        && (customerTypeFilter === 'all' || (sale.customer_type || 'walk_in') === customerTypeFilter)
         && (!from || soldAt >= from)
         && (!to || soldAt <= to);
     });
-  }, [rows, search, storeFilter, employeeFilter, paymentFilter, statusFilter, fromDate, toDate]);
+  }, [rows, search, storeFilter, employeeFilter, paymentFilter, statusFilter, customerTypeFilter, fromDate, toDate]);
 
   // The table is one row per sale *item*, so the header total has to sum each
   // sale once — not once per line — and count only what is still sold. A
@@ -152,6 +155,7 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
         <select value={employeeFilter} onChange={(event) => setEmployeeFilter(event.target.value)}><option value="all">All Employees</option>{employees.map((employee) => <option key={employee} value={employee}>{employee}</option>)}</select>
         <select value={paymentFilter} onChange={(event) => setPaymentFilter(event.target.value)}><option value="all">All Payments</option>{paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}</select>
         <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All Statuses</option><option value="paid">Paid</option><option value="partial">Partial</option><option value="pending">Pending</option></select>
+        <select value={customerTypeFilter} onChange={(event) => setCustomerTypeFilter(event.target.value)}><option value="all">All Customer Types</option><option value="walk_in">Walk-in</option><option value="referred">Referral</option></select>
         <DateField value={fromDate} onChange={setFromDate} title="From date" />
         <DateField value={toDate} onChange={setToDate} title="To date" />
       </section>
@@ -160,7 +164,7 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
 
       <section className="sales-table-wrap">
         <table className="sales-table-modern">
-          <thead><tr><th>Sale ID</th><th>Job Number</th><th>Product</th><th>IMEI</th><th>Customer</th><th>Store</th><th>Employee</th><th>Price Breakdown</th><th>Margin</th><th>Payment</th><th>Sale Date</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Sale ID</th><th>Job Number</th><th>Product</th><th>IMEI</th><th>Customer Type</th><th>Customer Name</th><th>Store</th><th>Employee</th><th>Price Breakdown</th><th>Margin</th><th>Payment</th><th>Sale Date</th><th>Status</th><th></th></tr></thead>
           <tbody>
             {filteredRows.map(({ key, sale, item }) => {
               // Historical snapshot only — never recalculated from today's
@@ -181,7 +185,13 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                   {item.retrieved && <span className="sales-retrieved-note" title={item.retrieval_reason || undefined}>Returned to stock{item.retrieved_at ? ` on ${formatDateTime(item.retrieved_at)}` : ''}</span>}
                 </td>
                 <td>{item.imei || '-'}</td>
-                <td>{sale.customer_name || 'Walk-in'}</td>
+                {/* Type and name are separate attributes. The old single
+                    column rendered `customer_name || 'Walk-in'`, so a reader
+                    could not tell a customer type from a person's name. */}
+                <td><span className={`sales-customer-type ${sale.customer_type || 'walk_in'}`}>{sale.customer_type_label || 'Walk-in'}</span></td>
+                <td>{sale.customer_name
+                  ? <strong>{sale.customer_name}</strong>
+                  : <span className="sales-customer-unnamed">Not recorded</span>}</td>
                 <td>{sale.store_name || '-'}</td>
                 <td>{sale.employee_name || sale.salesperson_name || '-'}</td>
                 <td>
@@ -209,11 +219,11 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
               </tr>
               );
             })}
-            {!loading && filteredRows.length === 0 && <tr><td colSpan={13} className="sales-empty">
+            {!loading && filteredRows.length === 0 && <tr><td colSpan={14} className="sales-empty">
               <strong>No sales found</strong>
               <span>No completed sales match the selected filters. Try changing the date range, store or search.</span>
             </td></tr>}
-            {loading && <tr><td colSpan={13} className="sales-empty">Loading sales...</td></tr>}
+            {loading && <tr><td colSpan={14} className="sales-empty">Loading sales...</td></tr>}
           </tbody>
         </table>
       </section>
@@ -236,7 +246,10 @@ const Sales: React.FC<{ user: User }> = ({ user }) => {
                 <dl>
                   <dt>Store</dt><dd>{viewDetail.store_name}</dd>
                   <dt>Employee</dt><dd>{viewDetail.employee_name}</dd>
-                  <dt>Customer</dt><dd>{viewDetail.customer_name}{viewDetail.customer_phone ? ` (${viewDetail.customer_phone})` : ''}</dd>
+                  <dt>Customer Type</dt><dd><span className={`sales-customer-type ${viewDetail.customer_type || 'walk_in'}`}>{viewDetail.customer_type_label || 'Walk-in'}</span></dd>
+                  <dt>Customer Name</dt><dd>{viewDetail.customer_name
+                    ? `${viewDetail.customer_name}${viewDetail.customer_phone ? ` (${viewDetail.customer_phone})` : ''}`
+                    : <span className="sales-customer-unnamed">Not recorded</span>}</dd>
                   <dt>Status</dt><dd>
                     <span className={`sales-status ${viewDetail.payment_status}`}>{viewDetail.payment_status}</span>
                     {viewDetail.is_retrieved && <span className="sales-status retrieved">retrieved</span>}

@@ -8,6 +8,7 @@ import {
 import { HttpError } from "../../utils/httpError.js";
 import { isLowStock } from "../inventory/activeStock.js";
 import { revenueSaleMatch } from "../sales/saleStatus.js";
+import { countSaleCustomers, customerTypeLabel } from "../sales/customerIdentity.js";
 
 const money = (value) => Number(value || 0);
 const id    = (value) => String(value?._id || value || "");
@@ -211,11 +212,15 @@ export async function getAdminReportOverview(filters) {
     status: x.status, transferStatus: x.status === "transferred" ? "Transferred" : "-",
   }));
 
+  // ── Customers ──────────────────────────────────────────────────────────────
+  const saleCustomers = countSaleCustomers(sales);
+
   // ── Customer rows ──────────────────────────────────────────────────────────
   const customerRows = customers.map((customer) => {
     const cSales = sales.filter((sale) => id(sale.customer) === id(customer));
     return {
       id: id(customer), customer: customer.fullName, phone: customer.phone || "",
+      customerType: customerTypeLabel(customer.sourceType),
       purchases: cSales.length,
       grossSpending:  cSales.reduce((sum, x) => sum + saleGross(x), 0),
       spending:       cSales.reduce((sum, x) => sum + saleNet(x), 0),
@@ -339,7 +344,14 @@ export async function getAdminReportOverview(filters) {
       totalExchangeValue,
       productsSold,
       inventoryValue,
-      totalCustomers:        customers.length,
+      // Customers who actually transacted in the period, counted by customer
+      // record — the same rule the Dashboard KPI uses, so the two reconcile.
+      // `customers` below is the registry and includes entries with no sales.
+      totalCustomers:        saleCustomers.total,
+      registeredCustomers:   customers.length,
+      walkInCustomers:       saleCustomers.walkIn,
+      referralCustomers:     saleCustomers.referred,
+      anonymousWalkInSales:  saleCustomers.anonymousSales,
       totalBuybacks:         buybacks.length,
       totalEmployees:        employees.filter((x) => x.isActive !== false).length,
       totalTransfers:        transferRows.length,

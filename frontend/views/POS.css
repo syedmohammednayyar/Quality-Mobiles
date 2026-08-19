@@ -738,3 +738,41 @@
 .pos-loss-lines li > span:nth-child(2){color:var(--text-secondary);font-size:11px;flex:1}
 .pos-loss-lines li > strong{font-weight:900;font-variant-numeric:tabular-nums}
 .pos-loss-net{display:flex;align-items:center;gap:8px;padding-top:6px;border-top:1px solid var(--color-error-100);font-size:12px;font-weight:850}
+
+/* Customer Type selector — a two-way toggle in the same visual language as the
+   payment-method buttons, so the cashier reads it as a required choice rather
+   than an optional extra. */
+.pos-customer-type {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.pos-customer-type button {
+  min-height: 38px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.pos-customer-type button.active {
+  border-color: var(--color-primary-500);
+  background: var(--color-primary-600);
+  color: white;
+}
+
+.pos-field select {
+  width: 100%;
+  min-height: 42px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 750;
+}

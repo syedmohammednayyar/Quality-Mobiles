@@ -1,4 +1,5 @@
 import { Customer, Store } from "../../db/models.js";
+import { CUSTOMER_TYPES, customerTypeLabel } from "../sales/customerIdentity.js";
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
 
@@ -9,6 +10,10 @@ function mapCustomer(doc) {
     email: doc.email || "",
     phone: doc.phone || "",
     store_ref: doc.store ? doc.store.toString() : null,
+    // Customer Type is an attribute of the record, reported alongside the name
+    // and never folded into it.
+    source_type: CUSTOMER_TYPES.includes(doc.sourceType) ? doc.sourceType : "walk_in",
+    source_type_label: customerTypeLabel(doc.sourceType),
     created_at: doc.createdAt,
   };
 }
@@ -56,6 +61,8 @@ export async function createCustomer(input) {
       email,
       phone,
       store: input.storeRef || null,
+      sourceType: CUSTOMER_TYPES.includes(input.sourceType) ? input.sourceType : "walk_in",
+      referredByEmployee: input.referredByEmployee || null,
     }], { session });
 
     return mapCustomer(customer);
@@ -87,6 +94,17 @@ export async function updateCustomer(customerId, input) {
 
     if (input.phone !== undefined) {
       customer.phone = input.phone.trim() || null;
+    }
+
+    if (input.sourceType !== undefined && CUSTOMER_TYPES.includes(input.sourceType)) {
+      customer.sourceType = input.sourceType;
+      // Referrer only belongs on a referred customer; clearing it on a switch
+      // back to walk-in keeps the record from claiming a referral it lost.
+      if (input.sourceType === "walk_in") customer.referredByEmployee = null;
+    }
+
+    if (input.referredByEmployee !== undefined) {
+      customer.referredByEmployee = input.referredByEmployee || null;
     }
 
     if (input.storeRef !== undefined) {

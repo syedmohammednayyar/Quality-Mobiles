@@ -1,10 +1,16 @@
 import { formatDate, toInputDate, todayInputDate } from "../utils/dateFormat";
 
+export type CustomerType = "walk_in" | "referred";
+
 export interface ApiCustomer {
   id: string;
   name: string;
   email: string;
   phone: string;
+  /** How the customer came to the store. Distinct from `name`. */
+  source_type?: CustomerType;
+  /** "Walk-in" / "Referral" — the label for `source_type`. */
+  source_type_label?: string;
   active?: boolean;
   last_login?: string | null;
   store_ref?: string | null;
@@ -241,7 +247,18 @@ export interface ApiSale {
   total_amount: string;
   payment_status?: "pending" | "partial" | "paid";
   sale_no?: string;
+  /**
+   * The linked customer record's name, or "" for an anonymous sale. Never the
+   * customer *type* — do not render `customer_name || "Walk-in"`; that put a
+   * type in a name field and made the two indistinguishable. Use
+   * `customer_type_label` for the type and show it alongside.
+   */
   customer_name?: string;
+  customer_id?: string | null;
+  customer_type?: CustomerType;
+  customer_type_label?: string;
+  is_anonymous?: boolean;
+  referred_by_name?: string;
   store_name?: string;
   employee_name?: string;
   payment_method?: string;
@@ -933,7 +950,9 @@ export interface DashboardSummary {
   // `amount` is net of anything retrieved off the bill, so this list can never
   // total more than the Revenue KPI it itemises; `billedAmount` keeps the
   // original figure for the rows that were reduced.
-  recentSales: Array<{ id: string; jobNumber: string; product: string; customer: string; store: string; salesman: string; amount: number; status: string; time: string; billedAmount?: number; retrievedAmount?: number; partiallyRetrieved?: boolean }>;
+  // `customer` is the record's name, "" when nobody was identified;
+  // `customerType` is always present. Kept apart for the same reason as in Sales.
+  recentSales: Array<{ id: string; jobNumber: string; product: string; customer: string; customerType?: string; store: string; salesman: string; amount: number; status: string; time: string; billedAmount?: number; retrievedAmount?: number; partiallyRetrieved?: boolean }>;
   activity: Array<{ activity: string; detail: string; user: string; time: string }>;
   alerts: Array<{ type: string; count: number; action: string }>;
   // ── Loss Management ──────────────────────────────────────────────────────
@@ -1462,7 +1481,12 @@ export async function listCustomers(): Promise<ApiCustomer[]> {
   }));
 }
 
-export async function createCustomer(payload: Pick<ApiCustomer, "name" | "email" | "phone" | "store_ref">): Promise<ApiCustomer> {
+export async function createCustomer(
+  payload: Pick<ApiCustomer, "name" | "email" | "phone" | "store_ref"> & {
+    source_type?: CustomerType;
+    referred_by_employee_id?: string | null;
+  },
+): Promise<ApiCustomer> {
   const row = await apiRequest<ApiCustomer>("/customers", {
     method: "POST",
     body: JSON.stringify({
@@ -1470,6 +1494,8 @@ export async function createCustomer(payload: Pick<ApiCustomer, "name" | "email"
       email: payload.email,
       phone: payload.phone,
       store_ref: payload.store_ref ?? null,
+      ...(payload.source_type ? { source_type: payload.source_type } : {}),
+      ...(payload.referred_by_employee_id ? { referred_by_employee_id: payload.referred_by_employee_id } : {}),
     }),
   });
 
@@ -1924,7 +1950,11 @@ export interface ApiSaleDetail {
   store_id: string;
   store_name: string;
   customer_id: string | null;
+  /** The record's name, "" when anonymous. Never the type — see ApiSale. */
   customer_name: string;
+  customer_type?: CustomerType;
+  customer_type_label?: string;
+  is_anonymous?: boolean;
   customer_phone: string;
   employee_id: string;
   employee_name: string;
@@ -2534,14 +2564,14 @@ export async function downloadBriefReportCSV(params: BriefReportParams): Promise
     const products = await listProducts(storeId || undefined);
     rows = products.map((product) => [product.sku, product.name, product.stock_quantity, toMoney(product.price)]);
   } else if (section === "customers") {
-    headers = ["Customer Name", "Phone", "Email", "Purchases", "Spent"];
+    headers = ["Customer Type", "Customer Name", "Phone", "Email", "Purchases", "Spent"];
     const [customers, sales] = await Promise.all([listCustomers(), listSales()]);
     rows = customers
       .filter((customer) => withinStore(customer.store_ref))
       .map((customer) => {
         const customerSales = sales.filter((sale) => sale.customer === customer.id && withinRange(sale.sold_at) && withinStore(sale.store_ref));
         const spent = customerSales.reduce((sum, sale) => sum + toNumber(sale.total_amount), 0);
-        return [customer.name, customer.phone, customer.email, customerSales.length, toMoney(spent)];
+        return [customer.source_type_label || "Walk-in", customer.name, customer.phone, customer.email, customerSales.length, toMoney(spent)];
       });
   } else {
     const [buybacks, repairs, expenses, outstanding] = await Promise.all([

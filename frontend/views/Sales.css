@@ -17,3 +17,14 @@
 .sales-status.retrieved{background:var(--status-warning-bg);color:var(--status-warning-text)!important;margin-left:6px}
 .sales-drawer-item.retrieved{border-left-color:var(--status-warning-text);opacity:.85}
 .sales-drawer-item.retrieved .sales-drawer-item-head strong{text-decoration:line-through}
+
+/* Customer Type is a badge, Customer Name is plain text — the visual
+   difference is the point: the two are separate attributes and must never
+   read as interchangeable values of one "Customer" column. */
+.sales-customer-type{display:inline-flex!important;width:fit-content;margin-top:0!important;padding:4px 8px;border-radius:6px;font-size:10px!important;font-weight:850;text-transform:uppercase;letter-spacing:.03em}
+.sales-customer-type.walk_in{background:var(--bg-secondary);color:var(--text-secondary)!important}
+.sales-customer-type.referred{background:var(--status-success-bg);color:var(--status-success-text)!important}
+/* A sale rung up without identifying anyone. Not a name, and not "Walk-in". */
+.sales-customer-unnamed{color:var(--text-tertiary)!important;font-style:italic}
+/* Splitting Customer into two columns needs the room; the wrap already scrolls. */
+.sales-table-modern{min-width:1560px}

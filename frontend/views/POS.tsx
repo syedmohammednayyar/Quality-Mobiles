@@ -4,12 +4,15 @@ import {
   createCustomer,
   createSale,
   listCustomers,
+  listEmployees,
   listStoreInventory,
   listStores,
   isApiError,
   type ApiCustomer,
+  type ApiEmployee,
   type ApiStoreInventoryRow,
   type ApiStore,
+  type CustomerType,
 } from '../services/api';
 import { calculateCartMargins, marginClass, type MarginResult } from '../utils/margin';
 import { MarginAmount, MarginBadge } from '../components/MarginBadge';
@@ -205,6 +208,12 @@ const POS: React.FC<POSProps> = ({ user }) => {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  // Customer Type is captured explicitly rather than assumed. Every sale used
+  // to be filed as walk_in regardless of how the customer actually arrived,
+  // which left the referral figure permanently zero.
+  const [customerType, setCustomerType] = useState<CustomerType>('walk_in');
+  const [referredByEmployeeId, setReferredByEmployeeId] = useState('');
+  const [employees, setEmployees] = useState<ApiEmployee[]>([]);
   const [discount, setDiscount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Cash');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -226,13 +235,14 @@ const POS: React.FC<POSProps> = ({ user }) => {
   useEffect(() => {
     const loadBaseData = async () => {
       try {
-        const [storeData, customerData] = await Promise.all([listStores(), listCustomers()]);
+        const [storeData, customerData, employeeData] = await Promise.all([listStores(), listCustomers(), listEmployees()]);
         const activeStores = storeData.filter((store) => store.is_active);
         const assignedStore = user.assignedStoreId
           ? activeStores.find((store) => String(store.id) === String(user.assignedStoreId))
           : activeStores[0];
         setStores(activeStores);
         setCustomers(customerData);
+        setEmployees(employeeData);
         setCurrentStoreId(assignedStore ? String(assignedStore.id) : '');
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load POS data');
@@ -268,7 +278,12 @@ const POS: React.FC<POSProps> = ({ user }) => {
     const phone = customerPhone.trim();
     if (phone.length < 5) return;
     const match = customers.find((c) => (c.phone || '').replace(/\D/g, '') === phone.replace(/\D/g, ''));
-    if (match) setCustomerName(match.name || '');
+    if (match) {
+      setCustomerName(match.name || '');
+      // A known customer brings their own recorded type, so the cashier is not
+      // silently re-filing a referral as a walk-in.
+      if (match.source_type) setCustomerType(match.source_type);
+    }
   }, [customerPhone, customers]);
 
   const currentStore = useMemo(
@@ -359,6 +374,8 @@ const POS: React.FC<POSProps> = ({ user }) => {
     setNewDevice({ brand: '', model: '', imei: '', condition: 'good', exchangeValue: 0, destinationStoreId: currentStoreId, inventoryStatus: 'ready' });
     setCustomerName('');
     setCustomerPhone('');
+    setCustomerType('walk_in');
+    setReferredByEmployeeId('');
     setDiscount(0);
     setPaymentMethod('Cash');
     setError('');
@@ -373,7 +390,14 @@ const POS: React.FC<POSProps> = ({ user }) => {
     if (!phone && !name) return null;
     const existing = customers.find((c) => phone && (c.phone || '').replace(/\D/g, '') === phone.replace(/\D/g, ''));
     if (existing) return existing.id;
-    const created = await createCustomer({ name: name || phone, phone, email: '', store_ref: currentStoreId });
+    const created = await createCustomer({
+      name: name || phone,
+      phone,
+      email: '',
+      store_ref: currentStoreId,
+      source_type: customerType,
+      referred_by_employee_id: customerType === 'referred' ? (referredByEmployeeId || null) : null,
+    });
     setCustomers((prev) => [created, ...prev]);
     return created.id;
   };
@@ -403,11 +427,11 @@ const POS: React.FC<POSProps> = ({ user }) => {
         got_amount:              finalAmount.toFixed(2),
         salesperson_name:        user.name,
         attended_by_employee_id: null,
-        customer_source:         'walk_in',
-        referred_by_employee_id: null,
+        customer_source:         customerType,
+        referred_by_employee_id: customerType === 'referred' ? (referredByEmployeeId || null) : null,
         referral_notes:          '',
         payment_method: paymentMethod === 'UPI' ? 'upi' : paymentMethod === 'Card' ? 'card' : paymentMethod === 'Bank Transfer' ? 'bank_transfer' : 'cash',
-        notes: `POS billing | payment=${paymentMethod} | customer=${customerName.trim() || 'walk-in'} | phone=${customerPhone.trim() || '-'}`,
+        notes: `POS billing | payment=${paymentMethod} | type=${customerType} | customer=${customerName.trim() || 'not recorded'} | phone=${customerPhone.trim() || '-'}`,
         items: cart.map((item) => ({
           product:            item.productId,
           quantity:           1,
@@ -717,9 +741,43 @@ const POS: React.FC<POSProps> = ({ user }) => {
             />
           </label>
 
+          {/* Customer Type is asked for, not assumed. It is a separate
+              attribute from the name below: a sale always has a type, and has
+              a name only when the customer was actually identified. */}
+          <label className="pos-field">
+            <span>Customer Type</span>
+            <div className="pos-customer-type">
+              {([['walk_in', 'Walk-in'], ['referred', 'Referral']] as Array<[CustomerType, string]>).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={customerType === value ? 'active' : ''}
+                  onClick={() => {
+                    setCustomerType(value);
+                    if (value === 'walk_in') setReferredByEmployeeId('');
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </label>
+
+          {customerType === 'referred' && (
+            <label className="pos-field">
+              <span>Referred By</span>
+              <select value={referredByEmployeeId} onChange={(event) => setReferredByEmployeeId(event.target.value)}>
+                <option value="">Select employee (optional)</option>
+                {employees
+                  .filter((employee) => !currentStoreId || String(employee.store_ref || '') === String(currentStoreId))
+                  .map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
+              </select>
+            </label>
+          )}
+
           <label className="pos-field">
             <span>Customer Name</span>
-            <input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Walk-in customer" />
+            <input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Leave blank if not recorded" />
           </label>
 
           <label className="pos-field">

@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import {
-  BulkInventory, Customer, ExchangeDevice, LossRecord, PriceAdjustment,
+  BulkInventory, ExchangeDevice, LossRecord, PriceAdjustment,
   Product, Sale, SerializedInventory, StockLedger, Store,
 } from "../../db/models.js";
 import { formatDate, formatDateRange, formatDayMonth, formatMonthYear, parseCalendarDate } from "../../utils/dateFormat.js";
@@ -14,6 +14,7 @@ import {
   outOfStockCountPipeline,
 } from "../inventory/activeStock.js";
 import { liveItemMatch, netOfRetrieved, revenueSaleMatch } from "../sales/saleStatus.js";
+import { customerTypeLabel, customerType, saleCustomerSummary } from "../sales/customerIdentity.js";
 
 const oid   = (value) => new mongoose.Types.ObjectId(value);
 const money = (value) => Number(value || 0);
@@ -330,7 +331,7 @@ export async function getDashboardSummary(options = {}) {
     periodSales, todaySales, weekSales, monthSales,
     periodAdjustments, todayAdjustments, monthAdjustments,
     periodExchanges, monthExchanges,
-    customers, available, buybackInventory, bulkLow, transfers,
+    customerSummary, available, buybackInventory, bulkLow, transfers,
     stores, recentSales, ledger,
     periodLoss, todayLoss, weekLoss, monthLoss, recentLosses,
     underRepairBuybacks, pendingPaymentsAgg,
@@ -345,7 +346,12 @@ export async function getDashboardSummary(options = {}) {
     adjustmentSummary(startOfMonth(), storeId, todayEnd),
     exchangeSummary(from,           storeId, to),
     exchangeSummary(startOfMonth(), storeId, todayEnd),
-    Customer.countDocuments(storeFilter),
+    // Total Customers counts customer *records* seen in Sales, not rows in the
+    // customer registry: a registry entry that never bought anything is not a
+    // customer of this store's sales, and the KPI has to reconcile with what
+    // Sales History shows. The rule lives in the Sales module so both read the
+    // same definition.
+    saleCustomerSummary(Sale, { storeMatch: storeFilter, revenueSaleMatch }),
     // Devices available to sell right now. SerializedInventory.status is the
     // authoritative per-device state, so a sold device is excluded here even
     // if some other model still carries a stale row for it.
@@ -477,7 +483,14 @@ export async function getDashboardSummary(options = {}) {
       // Inventory (point-in-time, store filtered but not date filtered)
       availableInventory,
       buybackInventory:   money(buybackInventory[0]?.count),
-      totalCustomers:     customers,
+      totalCustomers:     customerSummary.total,
+      // Breakdown so the headline can be reconciled against Sales History
+      // rather than taken on trust. anonymousSales are walk-in bills where
+      // nobody was identified, so they add no customer to totalCustomers.
+      walkInCustomers:      customerSummary.walkIn,
+      referralCustomers:    customerSummary.referred,
+      identifiedSales:      customerSummary.identifiedSales,
+      anonymousWalkInSales: customerSummary.anonymousSales,
       lowStockProducts:   lowStockCount,
       outOfStockProducts: outOfStockCount,
       underRepairBuybacks: underRepairBuybacks,
@@ -548,7 +561,10 @@ export async function getDashboardSummary(options = {}) {
         id:          String(sale._id),
         jobNumber:   sale.items[0]?.product?.jobId || sale.jobNumber || sale.saleNo,
         product:     sale.items[0]?.product?.name || "",
-        customer:    sale.customer?.fullName || "Walk-in",
+        // Name and type stay separate here too, so the panel never prints a
+        // customer type in the place a person's name belongs.
+        customer:     sale.customer?.fullName || "",
+        customerType: customerTypeLabel(customerType(sale)),
         store:       sale.store?.name || "",
         salesman:    sale.salespersonName || "",
         amount:      Math.max(0, money(sale.grandTotal) - retrieved),
