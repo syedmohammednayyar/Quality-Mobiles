@@ -19,12 +19,10 @@ import {
 } from "../db/models.js";
 
 const checks = [];
-const FIXED_STORES = [
-  { code: "STORE1", name: "Store 1" },
-  { code: "STORE2", name: "Store 2" },
-  { code: "STORE3", name: "Store 3" },
-  { code: "STORE4", name: "Store 4" },
-];
+// Identity is the code, never the name: the name is an admin-editable display
+// value, so the audit checks that each fixed store exists exactly once, is
+// active and is named something - not that it still carries its seed name.
+const FIXED_STORE_CODES = ["STORE1", "STORE2", "STORE3", "STORE4"];
 
 function addCheck(name, passed, detail = "") {
   checks.push({ name, passed, detail });
@@ -106,7 +104,7 @@ async function validateReferences() {
 async function validateFixedStoreContract() {
   const stores = await Store.find().sort({ code: 1 }).lean();
   const activeStores = stores.filter((store) => store.isActive !== false);
-  const fixedCodes = new Set(FIXED_STORES.map((store) => store.code));
+  const fixedCodes = new Set(FIXED_STORE_CODES);
   const activeFixedStores = activeStores.filter((store) => fixedCodes.has(store.code));
   const codeCounts = new Map();
   const nameCounts = new Map();
@@ -118,11 +116,11 @@ async function validateFixedStoreContract() {
 
   addCheck("Store count is exactly 4 active fixed stores", activeStores.length === 4 && activeFixedStores.length === 4, `${activeStores.length} active stores, ${activeFixedStores.length} active fixed stores`);
 
-  for (const expected of FIXED_STORES) {
-    const matches = stores.filter((store) => store.code === expected.code);
+  for (const code of FIXED_STORE_CODES) {
+    const matches = stores.filter((store) => store.code === code);
     const store = matches[0];
-    addCheck(`${expected.name} exists once with canonical code`, matches.length === 1, `${matches.length} records for ${expected.code}`);
-    addCheck(`${expected.name} is visible and active`, Boolean(store && store.name === expected.name && store.isActive !== false), store ? `name=${store.name}, isActive=${store.isActive !== false}` : "missing");
+    addCheck(`${code} exists once with canonical code`, matches.length === 1, `${matches.length} records for ${code}`);
+    addCheck(`${code} is visible, active and named`, Boolean(store && String(store.name || "").trim() && store.isActive !== false), store ? `name=${store.name}, isActive=${store.isActive !== false}` : "missing");
   }
 
   const duplicateCodes = [...codeCounts.entries()].filter(([, count]) => count > 1);

@@ -3,11 +3,15 @@ import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
 import { writeAudit } from "../../utils/audit.js";
 
+// The fixed set is keyed by `code` — the permanent identity, alongside `_id`.
+// `name` here is only the name a store is BORN with: it is the editable
+// display value, and the database record is the source of truth for it from
+// that point on. Nothing may treat these strings as the current name.
 const FIXED_STORES = [
-  { code: "STORE1", name: "Store 1" },
-  { code: "STORE2", name: "Store 2" },
-  { code: "STORE3", name: "Store 3" },
-  { code: "STORE4", name: "Store 4" },
+  { code: "STORE1", defaultName: "Store 1" },
+  { code: "STORE2", defaultName: "Store 2" },
+  { code: "STORE3", defaultName: "Store 3" },
+  { code: "STORE4", defaultName: "Store 4" },
 ];
 
 function mapStore(doc) {
@@ -162,15 +166,34 @@ export async function deactivateStore(storeId) {
   throw new HttpError(403, "Store deletion/deactivation is disabled for fixed stores.", "STORE_FIXED_SET");
 }
 
+/**
+ * Guarantees the four fixed stores exist. Runs on every backend start, so it
+ * must only ever CREATE missing stores — never overwrite what an admin has
+ * since configured on an existing one.
+ *
+ * `name` and `parentStore` are admin-editable, so they are seeded with
+ * `$setOnInsert` and left alone afterwards. They were previously in `$set`,
+ * which rewrote every store's name back to "Store 1".."Store 4" on each
+ * restart and silently destroyed every rename; the ids and codes survived,
+ * which is why the records stayed linked while the names kept reverting.
+ *
+ * `isActive` stays in `$set` on purpose: the system is contractually four
+ * active fixed stores (creation and deactivation are both refused above), so
+ * that invariant is re-asserted rather than being an admin preference.
+ */
+export function fixedStoreSeedUpdate(item) {
+  return {
+    $set: { isActive: true },
+    $setOnInsert: { code: item.code, name: item.defaultName, parentStore: null },
+  };
+}
+
 export async function ensureFixedStores() {
   await withTransaction(async (session) => {
     for (const item of FIXED_STORES) {
       await Store.updateOne(
         { code: item.code },
-        {
-          $set: { name: item.name, isActive: true, parentStore: null },
-          $setOnInsert: { code: item.code },
-        },
+        fixedStoreSeedUpdate(item),
         { upsert: true, session },
       );
     }
