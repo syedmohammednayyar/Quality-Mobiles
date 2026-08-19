@@ -35,6 +35,7 @@ declare namespace JSX {
 			key?: string | number;
 			className?: string;
 			disabled?: boolean;
+			title?: string;
 			type?: string;
 			onClick?: (event: any) => void;
 			children?: any;

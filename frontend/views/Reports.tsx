@@ -82,7 +82,46 @@ const CSV_COLUMNS: Partial<Record<Tab, Array<[string, string]>>> = {
     ["inventoryValue", "Inventory Value"], ["buybackValue", "Buyback Value"],
     ["employees", "Employees"],
   ],
+  movements: [
+    ["date", "Date"], ["jobNumber", "Job Number"], ["imei", "IMEI"],
+    ["product", "Product"], ["event", "Movement"], ["store", "Store"],
+    ["by", "Handled By"], ["currentStatus", "Current Status"],
+  ],
+  transfers: [
+    ["transferDate", "Transfer Date"], ["jobNumber", "Job Number"],
+    ["product", "Product"], ["fromStore", "From Store"], ["toStore", "To Store"],
+    ["transferredBy", "Transferred By"],
+  ],
+  customers: [
+    ["customerType", "Customer Type"], ["customer", "Customer Name"],
+    ["phone", "Phone"], ["store", "Store"], ["purchases", "Purchases"],
+    ["grossSpending", "Gross Spending"], ["spending", "Net Spending"],
+    ["adjustments", "Price Adjustments"], ["exchangeValue", "Exchange Value"],
+    ["lastPurchase", "Last Purchase"],
+  ],
+  employees: [
+    ["employee", "Employee"], ["role", "Role"], ["store", "Store"],
+    ["sales", "Sales"], ["productsSold", "Products Sold"],
+    ["grossRevenue", "Gross Revenue"], ["revenue", "Net Revenue"],
+    ["priceAdjustments", "Price Adjustments"], ["adjustmentCount", "Adjustment Count"],
+    ["lossTotal", "Loss Total"], ["lossTransactions", "Loss Bills"],
+    ["lastActivity", "Last Activity"],
+  ],
 };
+
+// The Financial report is a single summary object, not a list of records, so
+// it exports as Metric/Value pairs rather than one very wide row. Nested
+// breakdowns are flattened into their own rows — left as-is they stringify to
+// "[object Object]" and the figure is lost.
+const FINANCIAL_ROWS: Array<[string, string]> = [
+  ["grossRevenue", "Gross Revenue"], ["netRevenue", "Net Revenue"],
+  ["totalPriceAdjustments", "Total Price Adjustments"],
+  ["totalExchangeValue", "Total Exchange Value"],
+  ["buybackCost", "Buyback Cost"], ["expenses", "Total Expenses"],
+  ["netProfit", "Net Profit"], ["outstandingPayments", "Outstanding Payments"],
+  ["totalLoss", "Total Loss"], ["totalProfit", "Total Profit"],
+  ["netGrossResult", "Net Gross Result"],
+];
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = Array.from({ length: 6 }, (_, i) => CURRENT_YEAR - i);
@@ -178,29 +217,56 @@ const Reports: React.FC<{ user: User }> = ({ user }) => {
     return `${dateLabel} · ${storeName}`;
   }, [quickRange, fromDate, toDate, month, year, selectedStore, stores, user.role, user.assignedStoreId]);
 
-  const exportSheet = () => {
-    if (!rows.length) return;
+  // Every section is exportable, so the only thing that can stop an export is
+  // having no rows to write. The button now reflects that instead of silently
+  // doing nothing: returning early on an empty table was indistinguishable,
+  // from the user's side, from the feature not existing on that tab at all.
+  const canExport = rows.length > 0;
+
+  const buildCsv = (): string => {
+    // The Financial report is one summary object rather than a list of
+    // records, so it is written as Metric/Value pairs and its nested
+    // breakdown is expanded into rows. Left as a plain cell that breakdown
+    // stringifies to "[object Object]" and the figures are lost.
+    if (tab === "financial") {
+      const summary: any = rows[0] || {};
+      const lines: string[][] = [["Metric", "Value"]];
+      FINANCIAL_ROWS.forEach(([key, label]) => {
+        if (key in summary) lines.push([label, display(key, summary[key])]);
+      });
+      Object.entries(summary.adjustmentByCategory || {}).forEach(([category, value]: [string, any]) => {
+        lines.push([`Price Adjustments - ${pretty(category)} (count)`, String(value?.count ?? 0)]);
+        lines.push([`Price Adjustments - ${pretty(category)} (total)`, money(value?.totalDiscount ?? 0)]);
+      });
+      return lines.map((line) => line.map(csvEscape).join(",")).join("\n");
+    }
+
     // Curated columns when defined for this report type, else derive from the
-    // row shape. Either way the DATA is exactly `rows` \u2014 the same filtered,
+    // row shape. Either way the DATA is exactly `rows` — the same filtered,
     // searched set currently rendered in the table.
+    // A curated column survives when ANY row carries it: keying off rows[0]
+    // alone silently dropped columns the first row happened not to have.
     const defined = CSV_COLUMNS[tab];
     const columns: Array<[string, string]> = defined
-      ? defined.filter(([key]) => key in rows[0])
+      ? defined.filter(([key]) => rows.some((row: any) => key in row))
       : Object.keys(rows[0]).filter((x) => x !== "id").map((key) => [key, pretty(key)]);
 
-    const csv = [
+    return [
       columns.map(([, label]) => csvEscape(label)),
       // Same values the table shows, formatted the same way — this is the
       // human-readable export, not the raw system feed.
       ...rows.map((row: any) => columns.map(([key]) => csvEscape(display(key, row[key])))),
     ].map((line) => line.join(",")).join("\n");
+  };
 
-    const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" }));
+  const exportSheet = () => {
+    if (!canExport) return;
+    const url = URL.createObjectURL(new Blob([`\uFEFF${buildCsv()}`], { type: "text/csv;charset=utf-8;" }));
     const link = document.createElement("a"); link.href = url; link.download = exportFileName; link.click(); URL.revokeObjectURL(url);
   };
 
   return <div className="reports-page">
-    <header className="module-header reports-topbar"><div><h1>Business Control Center</h1><p>{user.role === "Admin" ? "Complete visibility across every Quality Mobiles store." : "Performance and operations for your assigned store."}</p></div><div className="reports-export"><button onClick={() => exportSheet()}>Export CSV</button><button onClick={() => window.print()}>Print</button></div></header>
+    <header className="module-header reports-topbar"><div><h1>Business Control Center</h1><p>{user.role === "Admin" ? "Complete visibility across every Quality Mobiles store." : "Performance and operations for your assigned store."}</p></div><div className="reports-export"><button onClick={() => exportSheet()} disabled={!canExport} title={canExport ? `Export the ${pretty(tab).toLowerCase()} report for ${scopeLabel}` : `Nothing to export — no ${pretty(tab).toLowerCase()} records for ${scopeLabel}`}>Export CSV</button><button onClick={() => window.print()}>Print</button></div></header>
     <nav className="reports-tabs reports-tabs-top">{tabs.map(([key, label]) => <button className={tab === key ? "active" : ""} key={key} onClick={() => setTab(key)}>{label}</button>)}</nav>
     <section className="reports-filters">
       <label><span>Store</span><select value={user.role === "Manager" ? user.assignedStoreId : selectedStore} onChange={(e) => setSelectedStore(e.target.value)} disabled={user.role === "Manager"}><option value="">All Stores</option>{stores.map((store) => <option value={store.id} key={store.id}>{store.name}</option>)}</select></label>
