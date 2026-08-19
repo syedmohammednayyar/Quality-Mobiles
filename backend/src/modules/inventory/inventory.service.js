@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { BulkInventory, Product, SerializedInventory, StockLedger, Store, StoreInventory } from "../../db/models.js";
+import { BulkInventory, Product, Sale, SerializedInventory, StockLedger, Store, StoreInventory } from "../../db/models.js";
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
 import { assertObjectId, toObjectId } from "../../utils/ids.js";
@@ -13,7 +13,37 @@ function toMoney(value) {
 // drift apart again — this rule was always correct; the dashboard's was not.
 const buildStatus = (quantity, minStockLevel) => classifyStockStatus(quantity, minStockLevel);
 
-function mapInventoryItem(store, item, updatedAt) {
+// ─── Retrieved / revised records ─────────────────────────────────────────────
+// A device retrieved from a completed sale goes back on the shelf as an
+// ordinary inventory row, indistinguishable from stock that was never sold.
+// Flagging it here is what lets the grid offer a Preview action on exactly the
+// records that have a revision worth reviewing.
+//
+// Retrievals are rare, so the working set is tiny: narrow to the few sales
+// that carry one, then group by product. Store is deliberately not filtered —
+// a device can be retrieved into a store other than the one that sold it, and
+// that record still needs its Preview.
+async function retrievalIndex() {
+  const rows = await Sale.aggregate([
+    { $match: { "items.retrievedAt": { $ne: null } } },
+    { $unwind: "$items" },
+    { $match: { "items.retrievedAt": { $ne: null } } },
+    { $sort: { "items.retrievedAt": 1 } },
+    {
+      $group: {
+        _id: "$items.product",
+        retrieval_count: { $sum: 1 },
+        last_retrieved_at: { $last: "$items.retrievedAt" },
+        last_sale_no: { $last: "$saleNo" },
+        last_reason: { $last: "$items.retrievalReason" },
+      },
+    },
+  ]);
+
+  return new Map(rows.map((row) => [String(row._id), row]));
+}
+
+function mapInventoryItem(store, item, updatedAt, retrieval = null) {
   const product = item.product;
   const quantity = Number(item.quantity || 0);
   const minStockLevel = Number(item.minStockLevel || 0);
@@ -61,6 +91,14 @@ function mapInventoryItem(store, item, updatedAt) {
     inventory_status: quantity <= 0 ? "sold" : (product.inventoryStatus || "ready"),
     inventory_mode: product.inventoryMode || "bulk",
     active: Boolean(product.isActive),
+    // Retrieval markers — present on every row so the grid never has to guess,
+    // false/empty on the overwhelming majority that were never sold and
+    // returned.
+    retrieved_from_sale: Boolean(retrieval),
+    retrieval_count: Number(retrieval?.retrieval_count || 0),
+    last_retrieved_at: retrieval?.last_retrieved_at || null,
+    retrieved_sale_no: retrieval?.last_sale_no || "",
+    retrieval_reason: retrieval?.last_reason || "",
     updated_at: updatedAt,
   };
 }
@@ -165,7 +203,7 @@ export async function listStoreInventory(storeId, options = {}) {
   const store = await requireStore(storeId);
   const limit = Math.max(1, Math.min(Number(options.limit || 100), 500));
   const offset = Math.max(0, Number(options.offset || 0));
-  const [products, bulkRows, serializedRows, legacyInventory] = await Promise.all([
+  const [products, bulkRows, serializedRows, legacyInventory, retrievals] = await Promise.all([
     Product.find({ isActive: true }).sort({ name: 1 }),
     BulkInventory.find({ store: store._id }).lean(),
     SerializedInventory.aggregate([
@@ -182,6 +220,7 @@ export async function listStoreInventory(storeId, options = {}) {
       path: "items.product",
       match: { isActive: true },
     }),
+    retrievalIndex(),
   ]);
 
   const productMap = new Map(products.map((product) => [product._id.toString(), product]));
@@ -195,7 +234,7 @@ export async function listStoreInventory(storeId, options = {}) {
       quantity: Number(item.quantity || 0),
       reservedQuantity: Number(item.reservedQuantity || 0),
       minStockLevel: Number(item.minStockLevel || 0),
-    }, item.updatedAt || new Date().toISOString()));
+    }, item.updatedAt || new Date().toISOString(), retrievals.get(String(item.product))));
   });
 
   serializedRows.forEach((item) => {
@@ -206,14 +245,14 @@ export async function listStoreInventory(storeId, options = {}) {
       quantity: Number(item.quantity || 0),
       reservedQuantity: 0,
       minStockLevel: 0,
-    }, item.updatedAt || new Date().toISOString()));
+    }, item.updatedAt || new Date().toISOString(), retrievals.get(String(item._id))));
   });
 
   if (rows.length === 0 && legacyInventory) {
     legacyInventory.items
       .filter((item) => item.product)
       .forEach((item) => {
-        rows.push(mapInventoryItem(store, item, legacyInventory.updatedAt));
+        rows.push(mapInventoryItem(store, item, legacyInventory.updatedAt, retrievals.get(String(item.product?._id || item.product))));
       });
   }
 

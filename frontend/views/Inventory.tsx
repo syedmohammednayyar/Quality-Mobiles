@@ -8,6 +8,7 @@ import {
   createProduct,
   deleteProduct,
   getProductHistory,
+  getProductPreview,
   getProductStockByStore,
   listStoreInventory,
   listProductTransferHistory,
@@ -15,6 +16,7 @@ import {
   transferInventoryStock,
   updateProduct,
   type ApiProductHistoryEntry,
+  type ApiProductPreview,
   type ApiProductStoreStock,
   type ApiStore,
   type ApiStoreInventoryRow,
@@ -157,6 +159,12 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
   const [productHistory, setProductHistory] = useState<ApiProductHistoryEntry[]>([]);
   const [storeStock, setStoreStock] = useState<{ rows: ApiProductStoreStock[]; total_stock: number } | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  // The Preview popup is deliberately separate from Details: Details is the
+  // working view of a stock row, Preview is the read-only review of a record
+  // that was revised after a sale.
+  const [previewRow, setPreviewRow] = useState<ApiStoreInventoryRow | null>(null);
+  const [preview, setPreview] = useState<ApiProductPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [pendingEdit, setPendingEdit] = useState<{ row: ApiStoreInventoryRow; field: EditableField; label: string; oldValue: string; newValue: string } | null>(null);
   const [remarkText, setRemarkText] = useState('');
   const [transferQuantity, setTransferQuantity] = useState(1);
@@ -267,7 +275,11 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
 
   const filteredRows = useMemo(() => {
     return rowsWithMargin.filter(({ row, margin }) => (
-      (statusFilter === 'all' || row.inventory_status === statusFilter)
+      // "retrieved" is not an inventory_status — a retrieved device is back on
+      // the shelf as "ready". It is a separate axis: which records were revised
+      // after a sale and therefore have something to preview.
+      (statusFilter === 'all'
+        || (statusFilter === 'retrieved' ? Boolean(row.retrieved_from_sale) : row.inventory_status === statusFilter))
       && (brandFilter === 'all' || row.brand === brandFilter)
       // Products with no recorded cost cannot be judged, so they are excluded
       // from margin filtering rather than silently counted as break-even.
@@ -304,8 +316,11 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
     const stock4g = filteredRows.filter((row) => row.network_type === '4G').length;
     const stock5g = filteredRows.filter((row) => row.network_type === '5G').length;
     const soldRecords = filteredRows.filter((row) => row.quantity <= 0).length;
-    return { totalProducts, totalValue, availableStock, stock4g, stock5g, soldRecords };
-  }, [filteredRows]);
+    // Counted across every loaded row, not the filtered set — this KPI is the
+    // way into the filter, so it must not read zero once the filter is on.
+    const retrievedRecords = rows.filter((row) => row.retrieved_from_sale).length;
+    return { totalProducts, totalValue, availableStock, stock4g, stock5g, soldRecords, retrievedRecords };
+  }, [filteredRows, rows]);
 
   const updateForm = (patch: Partial<ProductForm>) => setForm((prev) => ({ ...prev, ...patch }));
 
@@ -469,6 +484,23 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
       setError(err instanceof Error ? err.message : 'Failed to load product details');
     } finally {
       setHistoryLoading(false);
+    }
+  };
+
+  // Preview is a review action, not an edit path: it opens the popup straight
+  // away and fills it in when the data lands, so a slow request never leaves
+  // the user staring at an unchanged screen wondering if the click registered.
+  const openPreview = async (row: ApiStoreInventoryRow) => {
+    setPreviewRow(row);
+    setPreview(null);
+    setPreviewLoading(true);
+    try {
+      setPreview(await getProductPreview(row.product_id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load product preview');
+      setPreviewRow(null);
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -638,6 +670,16 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
           <strong>{summary.soldRecords}</strong>
           <em>{statusFilter === 'sold' ? 'Showing — click to clear' : 'Click to view'}</em>
         </button>
+        <button
+          type="button"
+          className={`inventory-kpi-action${statusFilter === 'retrieved' ? ' active' : ''}`}
+          title="Show only records retrieved from a completed sale and revised back into stock"
+          onClick={() => setStatusFilter(statusFilter === 'retrieved' ? 'all' : 'retrieved')}
+        >
+          <span>Retrieved / Revised</span>
+          <strong>{summary.retrievedRecords}</strong>
+          <em>{statusFilter === 'retrieved' ? 'Showing — click to clear' : 'Click to review'}</em>
+        </button>
       </section>
 
       <section className="inventory-table-panel">
@@ -655,7 +697,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
               {[...new Set(rows.map((row) => row.brand).filter(Boolean))].sort().map((brand) => <option key={brand} value={brand}>{brand}</option>)}
             </select>
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-              <option value="all">All Statuses</option><option value="ready">Ready for Sale</option><option value="under_repair">Under Repair</option><option value="sold">Sold</option>
+              <option value="all">All Statuses</option><option value="ready">Ready for Sale</option><option value="under_repair">Under Repair</option><option value="sold">Sold</option><option value="retrieved">Retrieved / Revised</option>
             </select>
             <select value={marginFilter} onChange={(event) => setMarginFilter(event.target.value as 'all' | MarginStatus)} title="Filter by pricing margin">
               <option value="all">All Margins</option>
@@ -722,10 +764,21 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
                     ) : (
                       <span className={`inventory-status ${row.inventory_status || 'ready'}`} title={row.inventory_status === 'under_repair' ? 'In buyback inventory but not currently sellable' : undefined}>{row.inventory_status === 'under_repair' ? '🔴 Under Repair' : row.inventory_status === 'ready' ? '🟢 Ready for Sale' : (row.inventory_status || 'ready')}</span>
                     )}
+                    {/* The status alone says "Ready for Sale" again, which hides
+                        that this device came back out of a sale. The marker is
+                        what tells an Admin/Manager there is a revision to review. */}
+                    {row.retrieved_from_sale && (
+                      <span className="inventory-revised-tag" title={`Retrieved from sale ${row.retrieved_sale_no || ''}${row.last_retrieved_at ? ` on ${formatDateTime(row.last_retrieved_at)}` : ''}`}>
+                        ↩ Revised
+                      </span>
+                    )}
                   </td>
                   <td>
                     <div className="inventory-row-actions">
                       <button className="btn btn-sm btn-secondary" onClick={() => void openDetails(row)}>Details</button>
+                      {(isAdmin || isManager) && row.retrieved_from_sale && (
+                        <button className="btn btn-sm btn-preview" title="Review the revised record: the sale it was retrieved from, the remark, and current stock" onClick={() => void openPreview(row)}>Preview</button>
+                      )}
                       {(isAdmin || isManager) && row.quantity > 0 && row.inventory_status !== 'sold' && row.active !== false && <button className="btn btn-sm btn-secondary" onClick={() => openTransfer(row)}>Transfer</button>}
                       {isAdmin && <button className="btn btn-sm btn-danger" onClick={() => void removeProduct(row)}>Delete</button>}
                     </div>
@@ -865,7 +918,117 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
               ))}
             </div>
 
-            <div className="inventory-modal-actions"><button className="btn btn-secondary" onClick={() => setDetailRow(null)}>Close</button>{(isAdmin || isManager) && detailRow.quantity > 0 && detailRow.inventory_status !== 'sold' && <button className="btn btn-primary" onClick={() => { setDetailRow(null); openTransfer(detailRow); }}>Transfer</button>}</div>
+            <div className="inventory-modal-actions"><button className="btn btn-secondary" onClick={() => setDetailRow(null)}>Close</button>{(isAdmin || isManager) && detailRow.retrieved_from_sale && <button className="btn btn-preview" onClick={() => { const row = detailRow; setDetailRow(null); void openPreview(row); }}>Preview Revision</button>}{(isAdmin || isManager) && detailRow.quantity > 0 && detailRow.inventory_status !== 'sold' && <button className="btn btn-primary" onClick={() => { setDetailRow(null); openTransfer(detailRow); }}>Transfer</button>}</div>
+          </div>
+        </div>
+      )}
+
+      {previewRow && (
+        <div className="inventory-detail-backdrop" onClick={() => { setPreviewRow(null); setPreview(null); }}>
+          <div className="inventory-detail-modal inventory-preview-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="inventory-modal-head">
+              <div>
+                <h2>Preview &middot; {previewRow.job_id || previewRow.sku}</h2>
+                <p>{previewRow.brand} {previewRow.model} &middot; Revised record, read-only</p>
+              </div>
+              <button type="button" onClick={() => { setPreviewRow(null); setPreview(null); }} aria-label="Close">x</button>
+            </div>
+
+            {previewLoading && <p className="inventory-preview-loading">Loading the revised record...</p>}
+
+            {!previewLoading && preview && (
+              <>
+                {/* The headline answer first: what came back, off which sale and
+                    for how much. Everything below is the supporting detail. */}
+                <div className={`inventory-preview-banner${preview.retrieved ? '' : ' neutral'}`}>
+                  {preview.retrieved ? (
+                    <>
+                      <strong>Retrieved from {preview.retrievals.length === 1 ? `sale ${preview.retrievals[0].sale_no}` : `${preview.retrievals.length} sales`}</strong>
+                      <span>
+                        Rs {toMoney(preview.retrieved_total)} reversed &middot; {preview.retrieved_quantity} unit{preview.retrieved_quantity === 1 ? '' : 's'} returned
+                        {preview.last_retrieved_at ? ` · last on ${formatDateTime(preview.last_retrieved_at)}` : ''}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <strong>No sale retrieval on this record</strong>
+                      <span>This product has not been taken back out of a completed sale. Its revision history is shown below.</span>
+                    </>
+                  )}
+                </div>
+
+                <h3>Product Record</h3>
+                <div className="inventory-detail-grid">
+                  <div><span>Job Number</span><strong>{preview.product.job_id || '-'}</strong></div>
+                  <div><span>Product</span><strong>{preview.product.name}</strong></div>
+                  <div><span>Brand / Model</span><strong>{[preview.product.brand, preview.product.model].filter(Boolean).join(' ') || '-'}</strong></div>
+                  <div><span>IMEI</span><strong>{preview.product.imei || '-'}</strong></div>
+                  <div><span>Store</span><strong>{preview.product.store_name || previewRow.store_name || '-'}</strong></div>
+                  <div><span>Current Status</span><strong className={preview.product.inventory_status === 'ready' ? 'text-profit' : preview.product.inventory_status === 'under_repair' ? 'text-loss' : ''}>{String(preview.product.inventory_status || 'ready').replace(/_/g, ' ')}</strong></div>
+                  <div><span>Purchase Price</span><strong>Rs {toMoney(preview.product.purchase_price)}</strong></div>
+                  <div><span>Selling Price</span><strong>Rs {toMoney(preview.product.selling_price || preview.product.price)}</strong></div>
+                  <div><span>Units On Hand</span><strong>{preview.stock.total_stock}</strong></div>
+                  <div><span>Last Updated</span><strong>{preview.product.updated_at ? formatDateTime(preview.product.updated_at) : formatDateTime(previewRow.updated_at)}</strong></div>
+                </div>
+                {preview.product.remarks && (
+                  <p className="inventory-preview-remark"><span>Product remarks</span>{preview.product.remarks}</p>
+                )}
+
+                <h3>Retrieval Details</h3>
+                <div className="inventory-history">
+                  {preview.retrievals.length === 0 && <p>No retrieval recorded against this product.</p>}
+                  {preview.retrievals.map((entry) => (
+                    <div key={`${entry.sale_id}-${entry.retrieved_at}`} className="inventory-preview-retrieval">
+                      <strong>
+                        Sale {entry.sale_no}{entry.job_number ? ` · Job ${entry.job_number}` : ''}
+                        <em className="inventory-sale-flag">{entry.fully_retrieved ? 'Fully retrieved' : 'Partially retrieved'}</em>
+                      </strong>
+                      <div className="inventory-detail-grid">
+                        <div><span>Sold On</span><strong>{entry.sold_at ? formatDateTime(entry.sold_at) : '-'}</strong></div>
+                        <div><span>Customer</span><strong>{entry.customer_name || '-'}</strong></div>
+                        <div><span>Sold For (gross)</span><strong>Rs {toMoney(entry.gross_amount)}</strong></div>
+                        {/* The net figure is the one that actually left revenue --
+                            gross alone would overstate what the reversal moved. */}
+                        <div><span>Reversed From Revenue</span><strong className="text-loss">Rs {toMoney(entry.net_amount)}</strong></div>
+                        <div><span>Retrieved On</span><strong>{entry.retrieved_at ? formatDateTime(entry.retrieved_at) : '-'}</strong></div>
+                        <div><span>Retrieved By</span><strong>{entry.retrieved_by || 'System'}</strong></div>
+                        <div><span>Quantity Returned</span><strong>{entry.quantity}</strong></div>
+                        <div><span>Sold From</span><strong>{entry.store_name || '-'}</strong></div>
+                      </div>
+                      {entry.retrieval_reason && <em>"{entry.retrieval_reason}"</em>}
+                    </div>
+                  ))}
+                </div>
+
+                <h3>Stock After Revision{preview.stock.total_stock > 0 && <span className="inventory-total-stock">Total: {preview.stock.total_stock}</span>}</h3>
+                <div className="inventory-detail-grid">
+                  {preview.stock.rows.length === 0 && <div><span>Stock</span><strong>No stock rows recorded.</strong></div>}
+                  {preview.stock.rows.map((row) => (
+                    <div key={row.store_id}>
+                      <span>{row.store_name} &middot; {row.store_code}</span>
+                      <strong className={row.quantity <= 0 ? 'text-muted' : row.stock_status === 'low_stock' ? 'text-warn' : ''}>{row.quantity} available</strong>
+                    </div>
+                  ))}
+                </div>
+
+                <h3>Revision Remarks</h3>
+                <div className="inventory-history">
+                  {preview.revisions.length === 0 && <p>No recorded revisions for this product.</p>}
+                  {preview.revisions.map((entry) => (
+                    <div key={entry.id} className="inventory-history-entry">
+                      <strong>{entry.changed_by} &middot; {formatDateTime(entry.changed_at)}</strong>
+                      {entry.changes.map((change) => <span key={change.field}>{change.field}: {String(change.old_value)} &rarr; {String(change.new_value)}</span>)}
+                      {entry.remark && <em>"{entry.remark}"</em>}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="inventory-modal-actions">
+                  <button className="btn btn-secondary" onClick={() => { setPreviewRow(null); setPreview(null); }}>Close</button>
+                  <button className="btn btn-primary" onClick={() => { const row = previewRow; setPreviewRow(null); setPreview(null); void openDetails(row); }}>Open Full Details</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

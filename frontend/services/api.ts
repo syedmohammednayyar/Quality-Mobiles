@@ -121,6 +121,14 @@ export interface ApiStoreInventoryRow {
   device_notes?: string;
   inventory_status?: "ready" | "under_repair" | "repair" | "sold";
   active?: boolean;
+  // Set when this record came back out of a completed sale. The grid keys its
+  // "Revised" marker and its Preview action off these — every other row is a
+  // plain stock row with nothing to review.
+  retrieved_from_sale?: boolean;
+  retrieval_count?: number;
+  last_retrieved_at?: string | null;
+  retrieved_sale_no?: string;
+  retrieval_reason?: string;
   updated_at: string;
 }
 
@@ -1726,6 +1734,51 @@ export interface ApiProductHistoryEntry {
 export async function getProductHistory(productId: string): Promise<ApiProductHistoryEntry[]> {
   const res = await apiRequest<{ rows: ApiProductHistoryEntry[] }>(`/products/${productId}/history`);
   return res.rows;
+}
+
+export interface ApiProductRetrieval {
+  sale_id: string;
+  sale_no: string;
+  job_number: string;
+  store_id: string | null;
+  store_name: string;
+  sale_status: "completed" | "partially_retrieved" | "retrieved" | string;
+  fully_retrieved: boolean;
+  sold_at: string | null;
+  customer_name: string;
+  salesperson_name: string;
+  quantity: number;
+  gross_amount: number;
+  net_amount: number;
+  retrieved_at: string | null;
+  retrieved_by: string;
+  retrieval_reason: string;
+}
+
+export interface ApiProductPreview {
+  product: ApiProduct & {
+    store_name?: string;
+    updated_at?: string | null;
+    primary_store_ref?: string | null;
+    inventory_status?: "ready" | "under_repair" | "repair" | "sold";
+  };
+  stock: { rows: ApiProductStoreStock[]; total_stock: number };
+  retrieved: boolean;
+  retrievals: ApiProductRetrieval[];
+  retrieved_total: number;
+  retrieved_quantity: number;
+  last_retrieved_at: string | null;
+  revisions: ApiProductHistoryEntry[];
+  latest_revision: ApiProductHistoryEntry | null;
+}
+
+/**
+ * Everything needed to review one product record in a single call — the sale it
+ * was retrieved from, the revision remarks, and where its units now sit.
+ * Read-only: this endpoint changes nothing.
+ */
+export async function getProductPreview(productId: string): Promise<ApiProductPreview> {
+  return apiRequest<ApiProductPreview>(`/products/${productId}/preview`);
 }
 
 export async function createInventoryChangeRequest(storeId: string, productId: string, oldValue: number, newValue: number, reason?: string) {

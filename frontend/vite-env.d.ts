@@ -36,6 +36,8 @@ declare namespace JSX {
 			className?: string;
 			disabled?: boolean;
 			type?: string;
+			title?: string;
+			"aria-label"?: string;
 			onClick?: (event: any) => void;
 			children?: any;
 		};
