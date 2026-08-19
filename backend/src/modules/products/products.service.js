@@ -6,6 +6,8 @@ import { toObjectId } from "../../utils/ids.js";
 import { writeAudit } from "../../utils/audit.js";
 import { nextSequence } from "../../utils/sequence.js";
 import { isSaleRetrieval, retrieveSoldProductLine } from "../sales/saleRetrieval.service.js";
+import { getProductStockByStore } from "../inventory/inventory.service.js";
+import { buildProductPreview } from "./productPreview.js";
 
 // Fields whose change is significant enough to require a remark and an audit entry.
 const AUDITED_FIELDS = ["unitPrice", "purchasePrice", "discount", "taxRate", "inventoryStatus", "isActive", "name", "brand", "model", "category"];
@@ -626,4 +628,49 @@ export async function getProductHistory(productId) {
       new_value: log.newValues?.[field] ?? null,
     })),
   }));
+}
+
+// ─── getProductPreview ─────────────────────────────────────────────────────
+// Read-only review of a single product record, for the Inventory "Preview"
+// action. A device retrieved from a completed sale is revised in place — the
+// row goes back to sellable, the sale is reversed, a remark is filed — and
+// until this existed there was no one screen that showed all three together.
+//
+// Everything is fetched in parallel and assembled by `buildProductPreview`;
+// this function only reads.
+
+export async function getProductPreview(productId) {
+  const id = toObjectId(productId, "PRODUCT_INVALID_ID");
+  const product = await Product.findById(id);
+  if (!product) throw new HttpError(404, "Product not found", "PRODUCT_NOT_FOUND");
+
+  const [mapped, sales, revisions, stock] = await Promise.all([
+    mapProduct(product),
+    // Only sales that actually gave this device back. A live sale line is the
+    // product's *current* owner, not part of a retrieval review.
+    Sale.find({ items: { $elemMatch: { product: id, retrievedAt: { $ne: null } } } })
+      .populate("store", "name code")
+      .populate("customer", "fullName phone")
+      .populate("items.retrievedBy", "username fullName")
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean(),
+    getProductHistory(productId),
+    getProductStockByStore(productId),
+  ]);
+
+  const store = mapped.primary_store_ref
+    ? await Store.findById(mapped.primary_store_ref).select("name").lean()
+    : null;
+
+  return buildProductPreview({
+    product: {
+      ...mapped,
+      store_name: store?.name || product.storeName || "",
+      updated_at: product.updatedAt || null,
+    },
+    sales,
+    revisions,
+    stock,
+  });
 }

@@ -5,6 +5,7 @@ import {
   createProduct,
   deleteProduct,
   getProductHistory,
+  getProductPreview,
   listProducts,
   updateProduct,
 } from "./products.service.js";
@@ -175,6 +176,23 @@ export async function getProductHistoryHandler(req, res, next) {
     const params = productIdParamsSchema.parse(req.params);
     const rows = await getProductHistory(params.productId);
     res.status(200).json({ rows });
+  } catch (error) {
+    if (handleZod(error, next)) return;
+    next(error);
+  }
+}
+
+export async function getProductPreviewHandler(req, res, next) {
+  try {
+    if (!req.auth) throw new HttpError(401, "Authentication required", "AUTH_REQUIRED");
+    const params = productIdParamsSchema.parse(req.params);
+    const preview = await getProductPreview(params.productId);
+    // A Manager may only review a record their own store holds. Admins see
+    // every store, which is the same rule the rest of this module applies.
+    if (!isAdmin(req.auth) && preview.product.primary_store_ref) {
+      assertStoreAccess(req.auth, preview.product.primary_store_ref);
+    }
+    res.status(200).json(preview);
   } catch (error) {
     if (handleZod(error, next)) return;
     next(error);

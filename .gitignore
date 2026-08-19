@@ -18,6 +18,10 @@ backend/.env.*
 .vite/
 frontend/.vite/
 
+# local mongodb instance (dev data + logs, never committed)
+.mongo-data/
+.mongo-log/
+
 # logs
 npm-debug.log*
 yarn-debug.log*
