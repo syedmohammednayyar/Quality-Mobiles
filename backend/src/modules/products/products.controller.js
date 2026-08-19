@@ -15,7 +15,9 @@ const productCategorySchema = z.enum(["new_phone", "used_phone", "accessories", 
 const conditionSchema = z.enum(["new", "used", "refurbished", "open_box", "damaged"]);
 
 const productPayloadSchema = z.object({
-  job_id: z.string().min(1).max(80),
+  // No job_id: the Job Number is allocated by the server on create and is
+  // immutable afterwards. Zod strips unknown keys, so an older client that
+  // still posts one is accepted and the value is dropped.
   product_code: z.string().max(80).optional(),
   sku: z.string().min(1).max(80),
   barcode: z.string().max(120).optional(),
@@ -85,7 +87,6 @@ function handleZod(error, next) {
 function toServicePayload(payload, userId) {
   return {
     userId,
-    jobId: payload.job_id,
     productCode: payload.product_code,
     sku: payload.sku,
     barcode: payload.barcode,

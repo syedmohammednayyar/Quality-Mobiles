@@ -53,7 +53,6 @@ function toMoney(value: number | string | undefined): string {
 
 function buildBlankForm(storeId: string, remembered?: Partial<ProductForm>): ProductForm {
   return {
-    job_id: '',
     product_code: '',
     sku: '',
     barcode: '',
@@ -333,8 +332,9 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
     setStatusMessage('');
     try {
       if (!formStoreId) throw new Error('Select the store this product belongs to before saving.');
-      if (!form.job_id?.trim()) throw new Error('Job Number is required.');
-      if (rows.some((row) => row.job_id.toLowerCase() === form.job_id?.trim().toLowerCase())) throw new Error('Job Number already exists.');
+      // No Job Number check here any more: the server allocates it on save and
+      // guarantees it is unique across every store, so there is nothing the
+      // form could usefully validate.
       await createProduct(buildPayload(form));
       const targetStore = visibleStores.find((store) => store.id === formStoreId)?.name;
       setStatusMessage(targetStore ? `Product added to ${targetStore}.` : 'Product added.');
@@ -542,7 +542,9 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
           </label>
           <label>
             <span>Job Number</span>
-            <input value={form.job_id || ''} onChange={(event) => updateForm({ job_id: event.target.value.toUpperCase() })} placeholder="JOB-00001" required />
+            {/* System-generated on save and unique across all stores, so it is
+                shown as read-only rather than typed in. */}
+            <input value="Auto-generated on save" disabled />
           </label>
           <label>
             <span>Brand</span>

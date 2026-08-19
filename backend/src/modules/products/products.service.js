@@ -5,6 +5,7 @@ import { HttpError } from "../../utils/httpError.js";
 import { toObjectId } from "../../utils/ids.js";
 import { writeAudit } from "../../utils/audit.js";
 import { nextSequence } from "../../utils/sequence.js";
+import { generateJobNumber } from "../../utils/jobNumber.js";
 import { isSaleRetrieval, retrieveSoldProductLine } from "../sales/saleRetrieval.service.js";
 
 // Fields whose change is significant enough to require a remark and an audit entry.
@@ -57,7 +58,10 @@ function resolveInventoryMode(input) {
 async function buildProductIdentity(input) {
   const year = new Date().getFullYear();
   return {
-    jobId: cleanText(input.jobId) || await nextSequence("product_job", "JOB-", 5),
+    // The Job Number is system-generated, always. Anything the caller sent is
+    // ignored rather than rejected, so an older client that still posts a
+    // job_id keeps working — it just does not get to choose the value.
+    jobId: await generateJobNumber(),
     productCode: cleanText(input.productCode) || await nextSequence(`product_code_${year}`, `QM-${year}-`, 4),
   };
 }
@@ -413,7 +417,9 @@ export async function updateProduct(productId, input) {
 
     const identityPayload = {
       sku: input.sku !== undefined ? input.sku : product.sku,
-      jobId: input.jobId !== undefined ? input.jobId : product.jobId,
+      // The Job Number is the permanent identifier of this record: it is
+      // carried forward untouched, never taken from the update payload.
+      jobId: product.jobId,
       productCode: input.productCode !== undefined ? input.productCode : product.productCode,
       barcode: input.barcode !== undefined ? input.barcode : product.barcode,
       imei: input.imei !== undefined ? input.imei : product.imei,
@@ -427,7 +433,6 @@ export async function updateProduct(productId, input) {
     AUDITED_FIELDS.forEach((field) => { beforeSnapshot[field] = product[field]; });
 
     if (input.sku !== undefined) product.sku = String(input.sku).trim().toLowerCase();
-    if (input.jobId !== undefined) product.jobId = cleanText(input.jobId);
     if (input.productCode !== undefined) product.productCode = cleanText(input.productCode);
     if (input.barcode !== undefined) product.barcode = cleanText(input.barcode);
     if (input.imei !== undefined) product.imei = cleanText(input.imei);

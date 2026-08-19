@@ -1616,7 +1616,6 @@ export async function createProduct(_payload: CreateProductPayload): Promise<Api
     method: "POST",
     body: JSON.stringify({
       sku: _payload.sku,
-      job_id: _payload.job_id,
       product_code: _payload.product_code,
       barcode: _payload.barcode,
       imei: _payload.imei,
@@ -1660,7 +1659,6 @@ export async function createProduct(_payload: CreateProductPayload): Promise<Api
 
 export async function updateProduct(_id: string, _payload: Partial<CreateProductPayload>): Promise<ApiProduct> {
   const body: Record<string, unknown> = {
-    ...(_payload.job_id !== undefined ? { job_id: _payload.job_id } : {}),
     ...(_payload.product_code !== undefined ? { product_code: _payload.product_code } : {}),
     ...(_payload.sku !== undefined ? { sku: _payload.sku } : {}),
     ...(_payload.barcode !== undefined ? { barcode: _payload.barcode } : {}),

@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import { Buyback, Store, Customer, Product, SerializedInventory, StoreInventory, StockLedger, PaymentEntry } from "../../db/models.js";
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
+import { generateJobNumber } from "../../utils/jobNumber.js";
 
 function toMoney(value) {
   const parsed = Number(value || 0);
@@ -132,7 +133,10 @@ async function processBuybackIntoInventory(buyback, userId, session) {
       const sku = `USED-${buyback._id.toString().slice(-6).toUpperCase()}`;
       const name = `${buyback.brand} ${buyback.model}`.trim();
 
-      const jobId = buyback.jobNo || `JOB-BB-${buyback._id.toString().slice(-8).toUpperCase()}`;
+      // A bought-back device becomes a normal inventory record, so it draws
+      // from the same global Job Number sequence as everything else instead of
+      // minting a parallel JOB-BB- identifier of its own.
+      const jobId = await generateJobNumber();
       const [newProduct] = await Product.create([{
         sku,
         jobId,
@@ -172,9 +176,14 @@ async function processBuybackIntoInventory(buyback, userId, session) {
     { session },
   );
 
+  // The serialized unit has to carry the same Job Number as the product record
+  // it belongs to — Reports and the POS job lookup match on this field, and a
+  // device reused from an existing product keeps that product's number.
+  const inventoryProduct = await Product.findById(productObjectId).select("jobId").session(session).lean();
+
   await SerializedInventory.findOneAndUpdate(
     { product: productObjectId, ...(buyback.imei ? { imei: buyback.imei } : {}) },
-    { $set: { serialId: `BB-${buyback._id}`, jobNumber: buyback.jobNo || `JOB-BB-${buyback._id.toString().slice(-8).toUpperCase()}`, store: storeObjectId, status: buyback.inventoryStatus === "under_repair" ? "under_repair" : "in_stock", addedBy: userId, notes: "BUYBACK / USED PHONE" } },
+    { $set: { serialId: `BB-${buyback._id}`, jobNumber: inventoryProduct?.jobId || undefined, store: storeObjectId, status: buyback.inventoryStatus === "under_repair" ? "under_repair" : "in_stock", addedBy: userId, notes: "BUYBACK / USED PHONE" } },
     { upsert: true, session },
   );
 
