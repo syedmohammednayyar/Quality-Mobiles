@@ -3,10 +3,10 @@ import { formatDate, formatDateTime, parseCalendarDate } from "../../utils/dateF
 import {
   BulkInventory, Buyback, Customer, Employee, Expense,
   LossRecord, PaymentEntry, PriceAdjustment, Product,
-  Sale, SerializedInventory, StockLedger, Store,
+  Sale, SerializedInventory, StockLedger, Store, StoreInventory,
 } from "../../db/models.js";
 import { HttpError } from "../../utils/httpError.js";
-import { isLowStock } from "../inventory/activeStock.js";
+import { buildStockView } from "./inventoryReport.js";
 import { revenueSaleMatch } from "../sales/saleStatus.js";
 import { countSaleCustomers, customerTypeLabel } from "../sales/customerIdentity.js";
 
@@ -107,7 +107,7 @@ export async function getAdminReportOverview(filters) {
 
   const [
     stores, sales, buybacks, expenses, payments,
-    customers, employees, serialized, bulk, transfers,
+    customers, employees, serialized, bulk, legacyInventory, transfers,
     priceAdjustments, losses,
   ] = await Promise.all([
     Store.find(storeIds.length ? { _id: { $in: storeIds }, isActive: true } : { isActive: true }).lean(),
@@ -121,7 +121,10 @@ export async function getAdminReportOverview(filters) {
     Customer.find(storeIds.length ? { store: { $in: storeIds } } : {}).populate("store").lean(),
     Employee.find(storeIds.length ? { store: { $in: storeIds } } : {}).populate("store user").lean(),
     SerializedInventory.find(storeQuery).populate("store product addedBy").sort({ createdAt: -1 }).limit(2000).lean(),
-    BulkInventory.find(storeQuery).populate("store product").lean(),
+    BulkInventory.find(storeQuery).populate("store product addedBy").lean(),
+    // Legacy fallback only — the same last resort the inventory screen falls
+    // back to for a store whose stock predates the BulkInventory model.
+    StoreInventory.find(storeQuery).populate("store").populate({ path: "items.product", match: { isActive: true } }).lean(),
     StockLedger.find({ ...storeQuery, ...dateQuery, referenceType: "stock_transfer" })
       .populate("store product createdBy").sort({ createdAt: -1 }).limit(2000).lean(),
     PriceAdjustment.find({ ...storeQuery, ...dateQuery }).populate("product employee store sale").sort({ createdAt: -1 }).limit(2000).lean(),
@@ -130,6 +133,11 @@ export async function getAdminReportOverview(filters) {
   ]);
   const exchangeBuybacks = buybacks.filter((x) => x.transactionType === "exchange" || x.linkedSale);
 
+  // Stock on hand, read from every model that can hold it — see
+  // inventoryReport.js for why reading only the serialized one left whole
+  // stores reporting an empty inventory.
+  const stock = buildStockView({ serialized, bulk, legacyInventory });
+
   // ── KPIs ───────────────────────────────────────────────────────────────────
   const grossRevenue         = sales.reduce((sum, x) => sum + saleGross(x), 0);
   const netRevenue           = sales.reduce((sum, x) => sum + saleNet(x), 0);
@@ -137,8 +145,7 @@ export async function getAdminReportOverview(filters) {
   const totalExchangeValue   = sales.reduce((sum, x) => sum + money(x.exchangeTotal), 0);
   const buybackCost          = buybacks.reduce((sum, x) => sum + money(x.negotiatedPrice), 0);
   const totalExpenses        = expenses.reduce((sum, x) => sum + money(x.outCash) + money(x.outOnline), 0);
-  const inventoryValue       = serialized.filter((x) => x.status === "in_stock").reduce((sum, x) => sum + money(x.product?.unitPrice), 0)
-    + bulk.reduce((sum, x) => sum + money(x.quantity) * money(x.product?.unitPrice), 0);
+  const inventoryValue       = stock.inventoryValue;
   const outstandingPayments  = payments.reduce((sum, x) => sum + money(x.outstandingAmount), 0);
   const productsSold         = sales.reduce((sum, x) => sum + liveItems(x).reduce((n, item) => n + money(item.quantity), 0), 0);
   const netProfit            = netRevenue - buybackCost - totalExpenses;
@@ -155,8 +162,6 @@ export async function getAdminReportOverview(filters) {
   const storePerformance = stores.map((store) => {
     const sId          = id(store);
     const storeSales   = sales.filter((x) => id(x.store) === sId);
-    const storeSerialized = serialized.filter((x) => id(x.store) === sId && x.status === "in_stock");
-    const storeBulk    = bulk.filter((x) => id(x.store) === sId);
     return {
       storeCode:        store.code,
       storeName:        store.name,
@@ -166,7 +171,7 @@ export async function getAdminReportOverview(filters) {
       exchangeValue:    storeSales.reduce((sum, x) => sum + money(x.exchangeTotal), 0),
       sales:            storeSales.length,
       productsSold:     storeSales.reduce((sum, x) => sum + liveItems(x).reduce((n, item) => n + money(item.quantity), 0), 0),
-      inventoryValue:   storeSerialized.reduce((sum, x) => sum + money(x.product?.unitPrice), 0) + storeBulk.reduce((sum, x) => sum + money(x.quantity) * money(x.product?.unitPrice), 0),
+      inventoryValue:   stock.valueForStore(sId),
       buybackValue:     buybacks.filter((x) => id(x.store) === sId).reduce((sum, x) => sum + money(x.negotiatedPrice), 0),
       employees:        employees.filter((x) => id(x.store) === sId && x.isActive !== false).length,
     };
@@ -204,13 +209,7 @@ export async function getAdminReportOverview(filters) {
   })));
 
   // ── Inventory rows ─────────────────────────────────────────────────────────
-  const inventoryRows = serialized.map((x) => ({
-    id: id(x), jobNumber: x.jobNumber || x.product?.jobId || "",
-    brand: x.product?.brand || "", model: x.product?.model || x.product?.name || "",
-    imei: x.imei || x.product?.imei || "", store: name(x.store),
-    purchasePrice: money(x.product?.purchasePrice), sellingPrice: money(x.product?.unitPrice),
-    status: x.status, transferStatus: x.status === "transferred" ? "Transferred" : "-",
-  }));
+  const inventoryRows = stock.rows;
 
   // ── Customers ──────────────────────────────────────────────────────────────
   const saleCustomers = countSaleCustomers(sales);
@@ -255,6 +254,7 @@ export async function getAdminReportOverview(filters) {
   // ── Movement rows ──────────────────────────────────────────────────────────
   const movementRows = [
     ...serialized.map((x) => ({ id: `added-${id(x)}`, jobNumber: x.jobNumber || x.product?.jobId || "", imei: x.imei || "", product: x.product?.name || "", event: "Product Added", store: name(x.store), date: x.createdAt, by: name(x.addedBy), currentStatus: x.status })),
+    ...stock.additions,
     ...transferRows.map((x) => ({ id: `transfer-${x.id}`, jobNumber: x.jobNumber, imei: "", product: x.product, event: `Transfer: ${x.fromStore} to ${x.toStore}`, store: x.toStore, date: x.transferDate, by: x.transferredBy, currentStatus: "transferred" })),
     ...saleRows.map((x) => ({ id: `sale-${x.id}-${x.jobNumber}`, jobNumber: x.jobNumber, imei: x.imei, product: x.product, event: x.retrieved ? `Retrieved: ${x.saleId}` : `Sold: ${x.saleId}`, store: x.store, date: x.date, by: x.employee, currentStatus: x.retrieved ? "retrieved" : "sold" })),
   ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -357,7 +357,7 @@ export async function getAdminReportOverview(filters) {
       totalTransfers:        transferRows.length,
       // Same rule as the dashboard and the inventory screen: a row with no
       // units left is out of stock, never low stock.
-      lowStockProducts:      bulk.filter((x) => isLowStock(x.quantity, x.minStockLevel)).length,
+      lowStockProducts:      stock.lowStockProducts,
       outstandingPayments,
       buybackCost,
       totalExpenses,

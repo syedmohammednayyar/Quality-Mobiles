@@ -3,7 +3,7 @@ import { BulkInventory, Product, SerializedInventory, StockLedger, Store, StoreI
 import { withTransaction } from "../../db/mongodb.js";
 import { HttpError } from "../../utils/httpError.js";
 import { assertObjectId, toObjectId } from "../../utils/ids.js";
-import { classifyStockStatus } from "./activeStock.js";
+import { classifyStockStatus, sellableUnitPrice } from "./activeStock.js";
 
 function toMoney(value) {
   return Number(value || 0).toFixed(2);
@@ -17,10 +17,9 @@ function mapInventoryItem(store, item, updatedAt) {
   const product = item.product;
   const quantity = Number(item.quantity || 0);
   const minStockLevel = Number(item.minStockLevel || 0);
-  const finalPrice = Math.max(
-    0,
-    Number(product.unitPrice || 0) - Number(product.discount || 0),
-  );
+  // Shared rule, so this screen and the reports module value a unit
+  // identically.
+  const finalPrice = sellableUnitPrice(product);
 
   return {
     store_id: store._id.toString(),

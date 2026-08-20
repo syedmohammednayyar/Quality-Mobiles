@@ -160,3 +160,34 @@ export const outOfStockCountPipeline = (storeId) => [
   },
   { $count: "count" },
 ];
+
+/**
+ * The price one unit is carried at when valuing stock, shared by the
+ * inventory screen and the reports module so a store's "Total Stock Value"
+ * reads the same in both. It is the price the unit would actually sell for —
+ * list price less any standing discount, never below zero.
+ */
+export function sellableUnitPrice(product) {
+  return Math.max(0, Number(product?.unitPrice || 0) - Number(product?.discount || 0));
+}
+
+/**
+ * A bulk stock row belongs in an inventory listing when its product still
+ * exists as a real product and is not a serialized device — SerializedInventory
+ * is authoritative for those, and listing a stray bulk row alongside it would
+ * show one physical device twice. Unlike `activeBulkStages` this keeps rows
+ * with no units left: a sold-out row is history the listing still reports,
+ * it just is not counted as available stock.
+ */
+export function isListableBulkRow(row) {
+  const product = row?.product;
+  if (!product || product.isActive === false) return false;
+  return product.inventoryMode !== "serialized";
+}
+
+/** A listable bulk row that still holds sellable units. */
+export function isAvailableBulkRow(row) {
+  return isListableBulkRow(row)
+    && Number(row.quantity || 0) > 0
+    && SELLABLE_PRODUCT_STATUSES.includes(String(row.product?.inventoryStatus || "ready"));
+}

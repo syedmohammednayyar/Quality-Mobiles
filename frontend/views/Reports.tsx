@@ -64,7 +64,7 @@ const CSV_COLUMNS: Partial<Record<Tab, Array<[string, string]>>> = {
   ],
   inventory: [
     ["jobNumber", "Job Number"], ["brand", "Brand"], ["model", "Model"],
-    ["imei", "IMEI"], ["store", "Store"],
+    ["imei", "IMEI"], ["store", "Store"], ["quantity", "Quantity"],
     ["purchasePrice", "Purchase Price"], ["sellingPrice", "Selling Price"],
     ["status", "Stock Status"], ["transferStatus", "Transfer Status"],
   ],
