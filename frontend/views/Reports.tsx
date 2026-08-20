@@ -25,7 +25,13 @@ const KPI_SETS: Record<Tab, string[]> = {
   losses: ["totalLoss", "lossItemCount", "lossTransactionCount", "averageLoss", "totalProfit", "netGrossResult"],
 };
 const money = (value: unknown) => `Rs ${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-const pretty = (key: string) => key.replace(/([A-Z])/g, " $1").replace(/^./, (x) => x.toUpperCase());
+// Keys whose derived label reads wrong — a payment mode is "UPI", not "Upi
+// Amount". Used for table headers and the detail drawer; the CSV carries its
+// own curated labels.
+const LABELS: Record<string, string> = {
+  cashAmount: "Cash", upiAmount: "UPI", cardAmount: "Card", bankTransferAmount: "Bank Transfer",
+};
+const pretty = (key: string) => LABELS[key] || key.replace(/([A-Z])/g, " $1").replace(/^./, (x) => x.toUpperCase());
 const isMoneyKey = (key: string) => !/percent/i.test(key) && /revenue|value|price|profit|amount|cost|spending|expenses|payments|loss|discount|result/i.test(key);
 const isDateKey = (key: string) => /date|time|createdAt|updatedAt/i.test(key);
 const display = (key: string, value: unknown) => {
@@ -53,7 +59,11 @@ const CSV_COLUMNS: Partial<Record<Tab, Array<[string, string]>>> = {
     ["store", "Store"], ["employee", "Employee"],
     ["listPrice", "List Price"], ["billedPrice", "Billed Price"],
     ["adjustmentDelta", "Price Adjustment"], ["amount", "Final Amount"],
-    ["paymentMethod", "Payment Method"], ["status", "Status"],
+    ["paymentMethod", "Payment Method"],
+    // Payment-mode split of the bill, one column per POS mode.
+    ["cashAmount", "Cash"], ["upiAmount", "UPI"],
+    ["cardAmount", "Card"], ["bankTransferAmount", "Bank Transfer"],
+    ["status", "Status"],
   ],
   losses: [
     ["date", "Date"], ["lossId", "Loss ID"], ["saleId", "Bill Number"],

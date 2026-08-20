@@ -9,6 +9,7 @@ import { HttpError } from "../../utils/httpError.js";
 import { buildStockView } from "./inventoryReport.js";
 import { revenueSaleMatch } from "../sales/saleStatus.js";
 import { countSaleCustomers, customerTypeLabel } from "../sales/customerIdentity.js";
+import { paymentMethodLabel, splitPaymentsAcrossItems } from "../sales/paymentModes.js";
 
 const money = (value) => Number(value || 0);
 const id    = (value) => String(value?._id || value || "");
@@ -189,28 +190,37 @@ export async function getAdminReportOverview(filters) {
   });
 
   // ── Sale rows (enhanced with price breakdown) ──────────────────────────────
-  const saleRows = sales.flatMap((sale) => sale.items.map((item) => ({
-    id:              id(sale),
-    saleId:          sale.saleNo,
-    jobNumber:       item.product?.jobId || sale.jobNumber || "",
-    product:         item.product?.name || "",
-    imei:            item.product?.imei || "",
-    customer:        name(sale.customer, "Walk-in"),
-    store:           name(sale.store),
-    employee:        name(sale.employee, sale.salespersonName || ""),
-    paymentMethod:   sale.payments?.[0]?.paymentMethod || "",
-    listPrice:       money(item.originalUnitPrice || item.originalPrice || item.unitPrice),
-    billedPrice:     money(item.adjustedUnitPrice  || item.unitPrice),
-    priceAdjusted:   Boolean(item.priceWasAdjusted),
-    adjustmentDelta: money(item.lineAdjustmentDelta),
-    amount:          money(item.lineAdjustedTotal  || item.lineTotal),
-    date:            sale.createdAt,
-    // Per line, not per bill: on a partially retrieved sale the lines that
-    // were not returned are still ordinary completed sales.
-    status:          item.retrievedAt ? "retrieved" : sale.status,
-    retrieved:       Boolean(item.retrievedAt),
-    retrievedAt:     item.retrievedAt || null,
-  })));
+  const saleRows = sales.flatMap((sale) => {
+    // What this bill was settled with, per POS payment mode, spread across the
+    // bill's lines so the mode columns of a multi-line bill still add up to
+    // what was actually collected.
+    const paidByMode = splitPaymentsAcrossItems(sale);
+    return sale.items.map((item, index) => ({
+      id:              id(sale),
+      saleId:          sale.saleNo,
+      jobNumber:       item.product?.jobId || sale.jobNumber || "",
+      product:         item.product?.name || "",
+      imei:            item.product?.imei || "",
+      customer:        name(sale.customer, "Walk-in"),
+      store:           name(sale.store),
+      employee:        name(sale.employee, sale.salespersonName || ""),
+      // Every mode used, not just the first: a split bill that reported only
+      // "cash" hid the rest of how it was paid.
+      paymentMethod:   paymentMethodLabel(sale),
+      ...paidByMode[index],
+      listPrice:       money(item.originalUnitPrice || item.originalPrice || item.unitPrice),
+      billedPrice:     money(item.adjustedUnitPrice  || item.unitPrice),
+      priceAdjusted:   Boolean(item.priceWasAdjusted),
+      adjustmentDelta: money(item.lineAdjustmentDelta),
+      amount:          money(item.lineAdjustedTotal  || item.lineTotal),
+      date:            sale.createdAt,
+      // Per line, not per bill: on a partially retrieved sale the lines that
+      // were not returned are still ordinary completed sales.
+      status:          item.retrievedAt ? "retrieved" : sale.status,
+      retrieved:       Boolean(item.retrievedAt),
+      retrievedAt:     item.retrievedAt || null,
+    }));
+  });
 
   // ── Inventory rows ─────────────────────────────────────────────────────────
   const inventoryRows = stock.rows;
