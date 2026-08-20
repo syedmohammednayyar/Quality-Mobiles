@@ -119,7 +119,11 @@ export async function getAdminReportOverview(filters) {
     Expense.find({ ...storeQuery, ...dateQuery }).lean(),
     PaymentEntry.find({ ...storeQuery, ...dateQuery }).lean(),
     Customer.find(storeIds.length ? { store: { $in: storeIds } } : {}).populate("store").lean(),
-    Employee.find(storeIds.length ? { store: { $in: storeIds } } : {}).populate("store user").lean(),
+    // The employee's role lives in User.roles (Role refs), not on the User
+    // document directly, so those refs must be populated or the report cannot
+    // tell a Manager from an Employee — the exact reason Reports > Employees
+    // showed every account as "Employee".
+    Employee.find(storeIds.length ? { store: { $in: storeIds } } : {}).populate("store").populate({ path: "user", populate: { path: "roles" } }).lean(),
     SerializedInventory.find(storeQuery).populate("store product addedBy").sort({ createdAt: -1 }).limit(2000).lean(),
     BulkInventory.find(storeQuery).populate("store product addedBy").lean(),
     // Legacy fallback only — the same last resort the inventory screen falls
@@ -237,7 +241,9 @@ export async function getAdminReportOverview(filters) {
     const eLossTotal = eLosses.reduce((sum, l) => sum + money(l.lossAmount), 0);
     return {
       id: id(employee), employee: employee.fullName, store: name(employee.store),
-      role:             employee.user?.role || "Employee",
+      // Same rule User Management displays by (employees.service.js mapEmployee):
+      // a "manager" role name means Manager, everything else is an Employee.
+      role:             (employee.user?.roles || []).some((r) => r?.name === "manager") ? "Manager" : "Employee",
       sales:            eSales.length,
       grossRevenue:     eSales.reduce((sum, x) => sum + saleGross(x), 0),
       revenue:          eSales.reduce((sum, x) => sum + saleNet(x), 0),
