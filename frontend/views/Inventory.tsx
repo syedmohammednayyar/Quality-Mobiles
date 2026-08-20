@@ -37,6 +37,16 @@ type ProductForm = Omit<CreateProductPayload, 'stock_quantity'>;
 
 const brands = ['Apple', 'Samsung', 'Vivo', 'Oppo', 'Redmi', 'Realme', 'OnePlus', 'Motorola', 'Nothing', 'Tecno', 'Infinix'];
 
+// The product-type (category) values, shared by the add form and the listing
+// filter so the two can never offer different types. These mirror the category
+// values stored on a product.
+const productTypes: { value: ProductForm['category']; label: string }[] = [
+  { value: 'new_phone', label: 'New Phone' },
+  { value: 'used_phone', label: 'Used Phone' },
+  { value: 'accessories', label: 'Accessories' },
+  { value: 'services', label: 'Service' },
+];
+
 const modelMap: Record<string, string[]> = {
   Apple: ['iPhone 15', 'iPhone 15 Pro', 'iPhone 14', 'iPhone 13', 'iPhone 12'],
   Samsung: ['A15', 'A25', 'A35', 'A55', 'S23', 'S24 Ultra'],
@@ -147,6 +157,9 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
   // the scoped list.
   const [destinationStores, setDestinationStores] = useState<ApiStore[]>([]);
   const [statusFilter, setStatusFilter] = useState('all');
+  // 'all' | a product category ('new_phone' | 'used_phone' | 'accessories' |
+  // 'services') — lets Admin/Manager narrow the listing to one product type.
+  const [typeFilter, setTypeFilter] = useState('all');
   // 'all' | 'PROFIT' | 'BREAK_EVEN' | 'LOSS' — lets a manager pull up every
   // product currently priced below cost in one step.
   const [marginFilter, setMarginFilter] = useState<'all' | MarginStatus>('all');
@@ -267,6 +280,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
   const filteredRows = useMemo(() => {
     return rowsWithMargin.filter(({ row, margin }) => (
       (statusFilter === 'all' || row.inventory_status === statusFilter)
+      && (typeFilter === 'all' || row.category === typeFilter)
       && (brandFilter === 'all' || row.brand === brandFilter)
       // Products with no recorded cost cannot be judged, so they are excluded
       // from margin filtering rather than silently counted as break-even.
@@ -278,7 +292,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
       if (sortKey === 'updated') return (new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()) * dir;
       return a.name.localeCompare(b.name) * dir;
     });
-  }, [rowsWithMargin, sortDir, sortKey, statusFilter, brandFilter, marginFilter]);
+  }, [rowsWithMargin, sortDir, sortKey, statusFilter, typeFilter, brandFilter, marginFilter]);
 
   const marginOf = useMemo(() => {
     const map = new Map<string, ReturnType<typeof calculateMargin>>();
@@ -595,10 +609,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
           <label>
             <span>Category</span>
             <select value={form.category} onChange={(event) => updateForm({ category: event.target.value as ProductForm['category'] })}>
-              <option value="new_phone">New Phone</option>
-              <option value="used_phone">Used Phone</option>
-              <option value="accessories">Accessories</option>
-              <option value="services">Service</option>
+              {productTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
             </select>
           </label>
           <label>
@@ -658,6 +669,10 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
             </select>
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
               <option value="all">All Statuses</option><option value="ready">Ready for Sale</option><option value="under_repair">Under Repair</option><option value="sold">Sold</option>
+            </select>
+            <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} title="Filter by product type">
+              <option value="all">All Product Types</option>
+              {productTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
             </select>
             <select value={marginFilter} onChange={(event) => setMarginFilter(event.target.value as 'all' | MarginStatus)} title="Filter by pricing margin">
               <option value="all">All Margins</option>
@@ -741,6 +756,7 @@ const Inventory: React.FC<InventoryProps> = ({ user, stores = [] }) => {
                   debouncedSearch && `"${debouncedSearch}"`,
                   brandFilter !== 'all' && brandFilter,
                   statusFilter !== 'all' && statusFilter.replace(/_/g, ' '),
+                  typeFilter !== 'all' && (productTypes.find((type) => type.value === typeFilter)?.label || typeFilter),
                   marginFilter !== 'all' && `${marginFilter.replace(/_/g, '-').toLowerCase()} margin`,
                   viewScopeLabel,
                 ].filter(Boolean).join(' · ') || 'the current filters'}. Try changing the search, brand or status filter.</span>

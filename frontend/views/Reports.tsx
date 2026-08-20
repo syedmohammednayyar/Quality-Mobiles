@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { getAdminReportOverview, listStores, type ApiStore } from "../services/api";
+import { getAdminReportOverview } from "../services/api";
+import { ALL_STORES, useStoreSelection } from "../context/StoreSelectionContext";
 import type { User } from "../types";
 import DateField from "../components/DateField";
 import { formatDate, formatDateTime, formatDayMonth } from "../utils/dateFormat";
@@ -127,8 +128,21 @@ const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = Array.from({ length: 6 }, (_, i) => CURRENT_YEAR - i);
 
 const Reports: React.FC<{ user: User }> = ({ user }) => {
-  const [stores, setStores] = useState<ApiStore[]>([]);
-  const [selectedStore, setSelectedStore] = useState("");
+  // The store picker in the header is the single source of truth for what this
+  // page shows, exactly as it is for the dashboard and the inventory screen.
+  // Reports used to hold its own private selection, so an admin who picked a
+  // store in the header saw every store's figures here — and the two controls
+  // could sit on screen disagreeing with each other. The Store dropdown below
+  // is a second view of that same selection, not a separate one.
+  const { selectedStoreId, selectedStoreName, isAllStores, stores: allStores, canSwitchStore, selectStore } = useStoreSelection();
+  const stores = useMemo(() => allStores.filter((x) => x.is_active), [allStores]);
+  // A manager is pinned to their own store whatever the selection says; for an
+  // admin, "All Stores" means no store filter at all.
+  const scopeStoreId = user.role === "Manager"
+    ? (user.assignedStoreId || "")
+    : (isAllStores ? "" : selectedStoreId);
+  const scopeStoreName = stores.find((s) => s.id === scopeStoreId)?.name
+    || (scopeStoreId ? selectedStoreName : "");
   const [quickRange, setQuickRange] = useState("this_month");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -156,10 +170,9 @@ const Reports: React.FC<{ user: User }> = ({ user }) => {
     toDate: toDate || undefined,
     month: quickRange === "month_year" ? month : undefined,
     year: quickRange === "month_year" ? year : undefined,
-    storeIds: user.role === "Manager" && user.assignedStoreId ? [user.assignedStoreId] : selectedStore ? [selectedStore] : [],
-  }), [quickRange, fromDate, toDate, month, year, selectedStore, user.assignedStoreId, user.role]);
+    storeIds: scopeStoreId ? [scopeStoreId] : [],
+  }), [quickRange, fromDate, toDate, month, year, scopeStoreId]);
 
-  useEffect(() => { void listStores().then((rows) => setStores(rows.filter((x) => x.is_active))); }, []);
   useEffect(() => {
     // Don't fire a request we already know is invalid, or an incomplete
     // custom range (both dates required).
@@ -192,30 +205,28 @@ const Reports: React.FC<{ user: User }> = ({ user }) => {
   // Filename documents exactly what's in the file: report type + store + date
   // scope \u2014 matches the CRITICAL rule that the export mirrors the current view.
   const exportFileName = useMemo(() => {
-    const storeLabel = user.role === "Manager"
-      ? slugify(stores.find((s) => s.id === user.assignedStoreId)?.name || "my-store")
-      : selectedStore ? slugify(stores.find((s) => s.id === selectedStore)?.name || "store") : "all-stores";
+    const storeLabel = scopeStoreId ? slugify(scopeStoreName || "store") : "all-stores";
     const dateLabel = quickRange === "custom"
       ? `${fromDate || "start"}_to_${toDate || "end"}`
       : quickRange === "month_year"
         ? (month === "all" ? String(year) : `${slugify(MONTHS[Number(month) - 1] || "")}-${year}`)
         : quickRange;
     return `${tab}-report_${storeLabel}_${dateLabel}.csv`;
-  }, [tab, user.role, user.assignedStoreId, selectedStore, stores, quickRange, fromDate, toDate, month, year]);
+  }, [tab, scopeStoreId, scopeStoreName, quickRange, fromDate, toDate, month, year]);
 
   // Human-readable description of the active scope, reused by the empty state
   // so the user can see exactly which filters produced zero rows.
   const scopeLabel = useMemo(() => {
-    const storeName = user.role === "Manager"
-      ? (stores.find((s) => s.id === user.assignedStoreId)?.name || "your store")
-      : selectedStore ? (stores.find((s) => s.id === selectedStore)?.name || "the selected store") : "all stores";
+    const storeName = scopeStoreId
+      ? (scopeStoreName || (user.role === "Manager" ? "your store" : "the selected store"))
+      : "all stores";
     const dateLabel = quickRange === "custom"
       ? `${fromDate ? formatDate(fromDate) : "?"} to ${toDate ? formatDate(toDate) : "?"}`
       : quickRange === "month_year"
         ? (month === "all" ? String(year) : `${MONTHS[Number(month) - 1] || ""} ${year}`)
         : pretty(quickRange).toLowerCase();
     return `${dateLabel} · ${storeName}`;
-  }, [quickRange, fromDate, toDate, month, year, selectedStore, stores, user.role, user.assignedStoreId]);
+  }, [quickRange, fromDate, toDate, month, year, scopeStoreId, scopeStoreName, user.role]);
 
   // Every section is exportable, so the only thing that can stop an export is
   // having no rows to write. The button now reflects that instead of silently
@@ -269,7 +280,9 @@ const Reports: React.FC<{ user: User }> = ({ user }) => {
     <header className="module-header reports-topbar"><div><h1>Business Control Center</h1><p>{user.role === "Admin" ? "Complete visibility across every Quality Mobiles store." : "Performance and operations for your assigned store."}</p></div><div className="reports-export"><button onClick={() => exportSheet()} disabled={!canExport} title={canExport ? `Export the ${pretty(tab).toLowerCase()} report for ${scopeLabel}` : `Nothing to export — no ${pretty(tab).toLowerCase()} records for ${scopeLabel}`}>Export CSV</button><button onClick={() => window.print()}>Print</button></div></header>
     <nav className="reports-tabs reports-tabs-top">{tabs.map(([key, label]) => <button className={tab === key ? "active" : ""} key={key} onClick={() => setTab(key)}>{label}</button>)}</nav>
     <section className="reports-filters">
-      <label><span>Store</span><select value={user.role === "Manager" ? user.assignedStoreId : selectedStore} onChange={(e) => setSelectedStore(e.target.value)} disabled={user.role === "Manager"}><option value="">All Stores</option>{stores.map((store) => <option value={store.id} key={store.id}>{store.name}</option>)}</select></label>
+      {/* Writes through to the shared selection, so the header and this page
+          can never end up scoped to different stores. */}
+      <label><span>Store</span><select value={scopeStoreId} onChange={(e) => selectStore({ id: e.target.value || ALL_STORES, name: stores.find((s) => s.id === e.target.value)?.name || "All Stores" })} disabled={!canSwitchStore}><option value="">All Stores</option>{stores.map((store) => <option value={store.id} key={store.id}>{store.name}</option>)}</select></label>
       <label><span>Date Range</span><select value={quickRange} onChange={(e) => setQuickRange(e.target.value)}>
         <option value="today">Today</option>
         <option value="yesterday">Yesterday</option>

@@ -8,13 +8,12 @@ import {
   getLossSummary,
   listEmployees,
   listLosses,
-  listStores,
   type ApiEmployee,
   type ApiLoss,
   type ApiLossSummary,
-  type ApiStore,
   type LossFilters,
 } from "../services/api";
+import { ALL_STORES, useStoreSelection } from "../context/StoreSelectionContext";
 import type { User } from "../types";
 import "./LossManagement.css";
 
@@ -28,7 +27,11 @@ const label = (value: string) => (value || "").replace(/_/g, " ");
 const LossManagement: React.FC<{ user: User }> = ({ user }) => {
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [stores, setStores] = useState<ApiStore[]>([]);
+  // Same shared selection the header writes to, so this screen is scoped to
+  // the store the admin actually picked rather than quietly reporting on all
+  // of them.
+  const { selectedStoreId, isAllStores, stores: allStores, canSwitchStore, selectStore } = useStoreSelection();
+  const stores = useMemo(() => allStores.filter((s) => s.is_active), [allStores]);
   const [employees, setEmployees] = useState<ApiEmployee[]>([]);
   const [summary, setSummary] = useState<ApiLossSummary | null>(null);
   const [rows, setRows] = useState<ApiLoss[]>([]);
@@ -42,7 +45,6 @@ const LossManagement: React.FC<{ user: User }> = ({ user }) => {
   const [quickRange, setQuickRange] = useState<"today" | "yesterday" | "this_week" | "this_month" | "this_year" | "custom">("this_month");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [storeId, setStoreId] = useState(searchParams.get("storeId") || "");
   const [employeeId, setEmployeeId] = useState(searchParams.get("employeeId") || "");
   const [brand, setBrand] = useState("");
   const [productType, setProductType] = useState("");
@@ -51,11 +53,31 @@ const LossManagement: React.FC<{ user: User }> = ({ user }) => {
   const [search, setSearch] = useState("");
 
   const isManager = user.role === "Manager";
+  const storeId = isManager ? (user.assignedStoreId || "") : (isAllStores ? "" : selectedStoreId);
 
   useEffect(() => {
-    void listStores().then((data) => setStores(data.filter((s) => s.is_active)));
     void listEmployees().then(setEmployees).catch(() => {});
   }, []);
+
+  // Arriving from a "Loss by Store" drill-down carries the store in the URL.
+  // That is a real store choice, so it is adopted into the shared selection —
+  // the header then names the store being reported on, instead of the link
+  // scoping this page behind the header's back. The parameter is consumed as
+  // it is applied: left in place it would keep re-asserting itself and the
+  // admin could never switch away from the store they arrived on.
+  const linkedStoreId = searchParams.get("storeId") || "";
+  useEffect(() => {
+    if (!linkedStoreId || stores.length === 0) return;
+    const match = isManager ? undefined : stores.find((s) => s.id === linkedStoreId);
+    if (match && match.id !== selectedStoreId) selectStore({ id: match.id, name: match.name });
+    const remaining = new URLSearchParams(searchParams);
+    remaining.delete("storeId");
+    setSearchParams(remaining, { replace: true });
+  }, [linkedStoreId, isManager, stores, selectedStoreId, selectStore, searchParams, setSearchParams]);
+
+  // The scope changed under the current page of results, so go back to page 1
+  // rather than showing "page 4 of 1".
+  useEffect(() => { setPage(0); }, [storeId]);
 
   const dateRange = useMemo(() => {
     if (quickRange !== "custom") return { fromDate: undefined, toDate: undefined };
@@ -65,7 +87,7 @@ const LossManagement: React.FC<{ user: User }> = ({ user }) => {
   const filters: LossFilters = useMemo(() => ({
     fromDate: dateRange.fromDate,
     toDate: dateRange.toDate,
-    storeIds: isManager && user.assignedStoreId ? [user.assignedStoreId] : storeId ? [storeId] : [],
+    storeIds: storeId ? [storeId] : [],
     employeeId: employeeId || undefined,
     brand: brand || undefined,
     productType: productType || undefined,
@@ -197,7 +219,7 @@ const LossManagement: React.FC<{ user: User }> = ({ user }) => {
           <label><span>To</span><DateField value={toDate} onChange={(v) => { setToDate(v); setPage(0); }} title="To date" /></label>
         </>}
         <label><span>Store</span>
-          <select value={isManager ? (user.assignedStoreId || "") : storeId} onChange={(e) => { setStoreId(e.target.value); setPage(0); }} disabled={isManager}>
+          <select value={storeId} onChange={(e) => selectStore({ id: e.target.value || ALL_STORES, name: stores.find((s) => s.id === e.target.value)?.name || "All Stores" })} disabled={!canSwitchStore}>
             <option value="">All Stores</option>
             {stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
