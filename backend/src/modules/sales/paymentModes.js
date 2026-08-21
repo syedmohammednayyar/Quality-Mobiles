@@ -97,3 +97,45 @@ export function paymentMethodLabel(sale) {
       || String(method).split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" "))
     .join(", ");
 }
+
+/** Money that arrived through an online mode — everything but cash and wallet. */
+export function isOnlinePayment(payment) {
+  const method = payment?.paymentMethod;
+  return Boolean(method) && method !== "cash" && method !== "wallet";
+}
+
+/**
+ * The online payment entries a sale should carry after its online total was
+ * edited, preserving the mode(s) the money actually came through.
+ *
+ * `updateSale` rewrites `payments[]` wholesale, and it used to hardcode every
+ * online rupee to `bank_transfer`. Editing an unrelated field on a UPI sale
+ * therefore rebranded the money as a bank transfer, and the sales report moved
+ * it into the wrong mode column permanently. How a bill was settled is a
+ * record of what happened, not something an edit to the amount gets to
+ * reassign, so the sale's own mode is carried forward instead.
+ *
+ * A sale settled with several online modes keeps all of them, the new total
+ * split across them in their original proportions. Only when there is no prior
+ * online payment to learn from — money arriving online for the first time,
+ * with nothing on the sale saying how — does this fall back to bank transfer.
+ */
+export function rebuildOnlinePayments(existingPayments, onlineCents) {
+  if (!(onlineCents > 0)) return [];
+
+  const prior = (existingPayments || []).filter(isOnlinePayment);
+  const entry = (paymentMethod, cents, referenceNo = null) => ({
+    paymentMethod, amountCents: cents, referenceNo: referenceNo || null,
+  });
+
+  if (!prior.length)      return [entry("bank_transfer", onlineCents)];
+  if (prior.length === 1) return [entry(prior[0].paymentMethod, onlineCents, prior[0].referenceNo)];
+
+  // Several modes: keep every one of them, weighted by what each originally
+  // took, with the last carrying the rounding remainder so the entries still
+  // add up to the edited total.
+  const shares = allocate(onlineCents, prior.map((payment) => toCents(payment.amount)));
+  return prior
+    .map((payment, index) => entry(payment.paymentMethod, shares[index], payment.referenceNo))
+    .filter((payment) => payment.amountCents > 0);
+}

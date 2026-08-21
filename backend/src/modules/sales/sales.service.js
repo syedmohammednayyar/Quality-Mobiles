@@ -11,6 +11,7 @@ import { nextSequence } from "../../utils/sequence.js";
 import { allocateEffectiveSellingAmounts, classifyLossType, computeCostBasis, evaluateLoss } from "../losses/lossCalculation.service.js";
 import { createLossRecordsForSale, reverseLossesForSale } from "../losses/losses.service.js";
 import { REVENUE_SALE_STATUSES, historySaleMatch } from "./saleStatus.js";
+import { isOnlinePayment, rebuildOnlinePayments } from "./paymentModes.js";
 import { customerFields } from "./customerIdentity.js";
 
 // ─── Money helpers ────────────────────────────────────────────────────────────
@@ -721,7 +722,7 @@ export async function updateSale(saleId, input) {
 
     const exchangeCents      = toCents(sale.exchangeTotal);
     const existingCashCents  = sale.payments.filter((p) => p.paymentMethod === "cash").reduce((s, p) => s + toCents(p.amount), 0);
-    const existingOnlineCents= sale.payments.filter((p) => p.paymentMethod !== "cash" && p.paymentMethod !== "wallet").reduce((s, p) => s + toCents(p.amount), 0);
+    const existingOnlineCents= sale.payments.filter(isOnlinePayment).reduce((s, p) => s + toCents(p.amount), 0);
     const existingWalletCents= sale.payments.filter((p) => p.paymentMethod === "wallet").reduce((s, p) => s + toCents(p.amount), 0);
 
     const cashCents   = input.cashAmount   !== undefined ? toCents(input.cashAmount)   : existingCashCents;
@@ -739,9 +740,15 @@ export async function updateSale(saleId, input) {
     sale.paymentStatus= paymentStatus;
     if (input.note !== undefined) sale.note = input.note;
 
+    // Read the existing modes before the array is cleared — they are what says
+    // whether the online money was UPI, card or an actual bank transfer.
+    const onlinePayments = rebuildOnlinePayments(sale.payments, onlineCents);
+
     sale.payments = [];
     if (cashCents   > 0) sale.payments.push({ paymentMethod: "cash",          status: "paid", amount: fromCents(cashCents),   createdBy: input.userId });
-    if (onlineCents > 0) sale.payments.push({ paymentMethod: "bank_transfer", status: "paid", amount: fromCents(onlineCents), createdBy: input.userId });
+    onlinePayments.forEach(({ paymentMethod, amountCents, referenceNo }) => {
+      sale.payments.push({ paymentMethod, status: "paid", amount: fromCents(amountCents), referenceNo, createdBy: input.userId });
+    });
     if (walletCents > 0) sale.payments.push({ paymentMethod: "wallet",        status: "paid", amount: fromCents(walletCents), notes: "exchange credit", createdBy: input.userId });
 
     await sale.save({ session });
